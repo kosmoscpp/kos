@@ -31,8 +31,7 @@ func getKosDir() string {
  if data, err := os.ReadFile(".kos-project"); err == nil {
   projectName := strings.TrimSpace(string(data))
   if projectName != "" {
-   result := filepath.Join(home, GlobalKosBase, projectName)
-   fmt.Printf("DEBUG: Using .kos-project, path = %s\n", result) // <-- ADD THIS
+   result := filepath.Join(home, GlobalKosBase, projectName)  
    return result
   }
  }
@@ -45,7 +44,6 @@ func getKosDir() string {
  }
  
  result := filepath.Join(home, GlobalKosBase, projectName)
- fmt.Printf("DEBUG: Using cwd, path = %s\n", result) // <-- ADD THIS
  return result
 }
 
@@ -722,11 +720,11 @@ func cmdStats() {
  fmt.Println("\033[1;36m║\033[0m                    \033[1;37mKOS PROJECT STATS\033[0m                    \033[1;36m║\033[0m")
  fmt.Println("\033[1;36m╚══════════════════════════════════════════════════════════╝\033[0m")
  fmt.Println()
- fmt.Printf("  \033[1;33mProject Name:\033[0m    %s\n", projectName)
- fmt.Printf("  \033[1;33mTotal Commits:\033[0m   %d\n", totalCommits)
- fmt.Printf("  \033[1;33mUnique Files:\033[0m    %d\n", len(uniqueFiles))
- fmt.Printf("  \033[1;33mTotal Snapshots:\033[0m %d\n", totalFiles)
- fmt.Printf("  \033[1;33mRepo Size:\033[0m        %s\n", sizeStr)
+fmt.Printf("  \033[1;33mProject Name:\033[0m      %s\n", projectName)
+fmt.Printf("  \033[1;33mTotal Commits:\033[0m     %d\n", totalCommits)
+fmt.Printf("  \033[1;33mUnique Files:\033[0m      %d\n", len(uniqueFiles))
+fmt.Printf("  \033[1;33mFile Entries:\033[0m      %d\n", totalFiles) 
+fmt.Printf("  \033[1;33mRepository Size:\033[0m   %s\n", sizeStr)
  
  if totalCommits > 0 {
   oldest := manifest.Snapshots[0]

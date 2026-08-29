@@ -24,17 +24,29 @@ const (
 func getKosDir() string {
  home, err := os.UserHomeDir()
  if err != nil {
-  home = "." // Fallback
+  home = "."
  }
  
- // Get current directory name as project name
+ // Check if .kos-project exists (for loaded projects)
+ if data, err := os.ReadFile(".kos-project"); err == nil {
+  projectName := strings.TrimSpace(string(data))
+  if projectName != "" {
+   result := filepath.Join(home, GlobalKosBase, projectName)
+   fmt.Printf("DEBUG: Using .kos-project, path = %s\n", result) // <-- ADD THIS
+   return result
+  }
+ }
+ 
+ // Otherwise, use current directory name
  cwd, _ := os.Getwd()
  projectName := filepath.Base(cwd)
  if projectName == "/" || projectName == "" {
   projectName = "root_project"
  }
  
- return filepath.Join(home, GlobalKosBase, projectName)
+ result := filepath.Join(home, GlobalKosBase, projectName)
+ fmt.Printf("DEBUG: Using cwd, path = %s\n", result) // <-- ADD THIS
+ return result
 }
 
 type Snapshot struct {
@@ -95,6 +107,8 @@ func main() {
    os.Exit(1)
   }
   cmdLoad(os.Args[2])
+ case "stats":
+  cmdStats()
  default:
   fmt.Printf("Unknown command: %s\n", command)
   printUsage()
@@ -106,35 +120,42 @@ func printUsage() {
  fmt.Println("KOS - Zero-Dependency Portable Version Control")
  fmt.Println("Usage: kos <command> [arguments]")
  fmt.Println("\nCommands:")
- fmt.Println("  init              Initialize a new KOS repository")
- fmt.Println("  ignore <pattern>  Add a pattern to .kosignore")
- fmt.Println("  save <message>    Create a new snapshot")
- fmt.Println("  view              View the ASCII timeline")
- fmt.Println("  status            Show modified files")
- fmt.Println("  diff <id1> <id2>  Compare two snapshots")
- fmt.Println("  export <id> <dir> Extract a snapshot to a folder")
+ fmt.Println("  init               Initialize a new KOS repository")
+ fmt.Println("  ignore <pattern>   Add a pattern to .kosignore")
+ fmt.Println("  save <message>     Create a new snapshot")
+ fmt.Println("  view               View the ASCII timeline")
+ fmt.Println("  status             Show modified files")
+ fmt.Println("  diff <id1> <id2>   Compare two snapshots")
+ fmt.Println("  export <id> <dir>  Extract a snapshot to a folder")
  fmt.Println("  load <file.tar.gz> Restore from a portable snapshot")
+ fmt.Println("  stats              Show project statistics")
 }
 
 func cmdInit() {
- if _, err := os.Stat(getKosDir()); err == nil {
+ kosDir := getKosDir()
+ 
+ if _, err := os.Stat(kosDir); err == nil {
   fmt.Println("KOS repository already initialized.")
   return
  }
- if err := os.MkdirAll(getKosDir(), 0755); err != nil {
-  fmt.Printf("Error creating %s: %v\n", getKosDir(), err)
+ 
+ if err := os.MkdirAll(kosDir, 0755); err != nil {
+  fmt.Printf("Error creating %s: %v\n", kosDir, err)
   os.Exit(1)
  }
+ 
  manifest := Manifest{Snapshots: []Snapshot{}}
  if err := saveManifest(manifest); err != nil {
   fmt.Printf("Error creating manifest: %v\n", err)
   os.Exit(1)
  }
+ 
  if err := os.WriteFile(IgnoreFile, []byte(""), 0644); err != nil {
   fmt.Printf("Error creating %s: %v\n", IgnoreFile, err)
   os.Exit(1)
  }
- fmt.Println("Initialized empty KOS repository in .kos/")
+ 
+ fmt.Printf("Initialized empty KOS repository in %s\n", kosDir)
 }
 
 func cmdIgnore(pattern string) {
@@ -458,19 +479,23 @@ func cmdDiff(id1, id2 string) {
   
   // --- Helper Functions ---
   
-  func saveManifest(m Manifest) error {
-   data, err := json.MarshalIndent(m, "", "  ")
-   if err != nil { return err }
-   return os.WriteFile(filepath.Join(getKosDir(), ManifestFile), data, 0644)
-  }
-  
-  func loadManifest() (Manifest, error) {
-   var m Manifest
-   data, err := os.ReadFile(filepath.Join(getKosDir(), ManifestFile))
-   if err != nil { return m, err }
-   err = json.Unmarshal(data, &m)
-   return m, err
-  }
+func saveManifest(m Manifest) error {
+ data, err := json.MarshalIndent(m, "", "  ")
+ if err != nil {
+  return err
+ }
+ return os.WriteFile(filepath.Join(getKosDir(), ManifestFile), data, 0644)
+}
+
+func loadManifest() (Manifest, error) {
+ var m Manifest
+ data, err := os.ReadFile(filepath.Join(getKosDir(), ManifestFile))
+ if err != nil {
+  return m, err
+ }
+ err = json.Unmarshal(data, &m)
+ return m, err
+}
   
   func loadIgnores() []string {
    data, err := os.ReadFile(IgnoreFile)
@@ -653,4 +678,75 @@ func extractFileFromTar(tarPath, fileName string) (string, error) {
  }
 
  return "", fmt.Errorf("file not found in archive")
+}
+func cmdStats() {
+ manifest, err := loadManifest()
+ if err != nil {
+  fmt.Printf("Error: Not a KOS repository. Run 'kos init'.\n")
+  os.Exit(1)
+ }
+
+ // Get project name
+ projectName := "unknown"
+ if data, err := os.ReadFile(".kos-project"); err == nil {
+  projectName = strings.TrimSpace(string(data))
+ } else {
+  cwd, _ := os.Getwd()
+  projectName = filepath.Base(cwd)
+ }
+
+ // Calculate stats
+ totalCommits := len(manifest.Snapshots)
+ totalFiles := 0
+ uniqueFiles := make(map[string]bool)
+ var totalSize int64
+
+ for _, snap := range manifest.Snapshots {
+  totalFiles += len(snap.Files)
+  for file := range snap.Files {
+   uniqueFiles[file] = true
+  }
+  
+  // Get snapshot file size
+  snapPath := filepath.Join(getKosDir(), snap.Filename)
+  if info, err := os.Stat(snapPath); err == nil {
+   totalSize += info.Size()
+  }
+ }
+
+ // Format size
+ sizeStr := formatBytes(totalSize)
+
+ // Print dashboard
+ fmt.Println("\n\033[1;36m╔══════════════════════════════════════════════════════════╗\033[0m")
+ fmt.Println("\033[1;36m║\033[0m                    \033[1;37mKOS PROJECT STATS\033[0m                    \033[1;36m║\033[0m")
+ fmt.Println("\033[1;36m╚══════════════════════════════════════════════════════════╝\033[0m")
+ fmt.Println()
+ fmt.Printf("  \033[1;33mProject Name:\033[0m    %s\n", projectName)
+ fmt.Printf("  \033[1;33mTotal Commits:\033[0m   %d\n", totalCommits)
+ fmt.Printf("  \033[1;33mUnique Files:\033[0m    %d\n", len(uniqueFiles))
+ fmt.Printf("  \033[1;33mTotal Snapshots:\033[0m %d\n", totalFiles)
+ fmt.Printf("  \033[1;33mRepo Size:\033[0m        %s\n", sizeStr)
+ 
+ if totalCommits > 0 {
+  oldest := manifest.Snapshots[0]
+  newest := manifest.Snapshots[len(manifest.Snapshots)-1]
+  fmt.Printf("  \033[1;33mFirst Commit:\033[0m    %s (%s)\n", oldest.ID, time.Unix(oldest.Timestamp, 0).Format("Jan 02, 15:04"))
+  fmt.Printf("  \033[1;33mLatest Commit:\033[0m   %s (%s)\n", newest.ID, time.Unix(newest.Timestamp, 0).Format("Jan 02, 15:04"))
+ }
+ 
+ fmt.Println()
+}
+
+func formatBytes(bytes int64) string {
+ const unit = 1024
+ if bytes < unit {
+  return fmt.Sprintf("%d B", bytes)
+ }
+ div, exp := int64(unit), 0
+ for n := bytes / unit; n >= unit; n /= unit {
+  div *= unit
+  exp++
+ }
+ return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
 }

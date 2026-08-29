@@ -160,7 +160,6 @@ func cmdSave(message string) {
  snapshot.Files = currentFiles
 
  manifest.Snapshots = append(manifest.Snapshots, snapshot)
-
  file, err := os.Create(filepathTar)
   if err != nil {
    fmt.Printf("Error creating snapshot file: %v\n", err)
@@ -302,7 +301,6 @@ func cmdSave(message string) {
    fmt.Printf("Error: One or both snapshot IDs not found.\n")
    os.Exit(1)
   }
-
   var added, deleted, modified []string
    for path, hash2 := range snap2.Files {
     hash1, exists := snap1.Files[path]
@@ -469,6 +467,7 @@ func cmdSave(message string) {
    io.Copy(tw, f)
   }
   
+  // FIXED: Uses absolute paths to prevent false-positive zip-slip errors when destDir is "."
   func extractTarGz(tarPath, destDir string) error {
    file, err := os.Open(tarPath)
    if err != nil { return err }
@@ -479,6 +478,10 @@ func cmdSave(message string) {
    defer gzr.Close()
   
    tr := tar.NewReader(gzr)
+   
+   // Get absolute path of destination for secure zip-slip check
+   absDest, err := filepath.Abs(destDir)
+   if err != nil { return err }
   
    for {
     header, err := tr.Next()
@@ -486,10 +489,11 @@ func cmdSave(message string) {
     if err != nil { return err }
   
     target := filepath.Join(destDir, header.Name)
+    absTarget, err := filepath.Abs(target)
+    if err != nil { return err }
     
-    cleanTarget := filepath.Clean(target)
-    cleanDest := filepath.Clean(destDir)
-    if !strings.HasPrefix(cleanTarget, cleanDest+string(os.PathSeparator)) && cleanTarget != cleanDest {
+    // Secure zip-slip protection using absolute paths
+    if !strings.HasPrefix(absTarget, absDest+string(os.PathSeparator)) && absTarget != absDest {
      return fmt.Errorf("illegal file path: %s", header.Name)
     }
   

@@ -2,6 +2,7 @@ package main
 
 import (
  "archive/tar"
+ "bytes"
  "compress/gzip"
  "crypto/sha256"
  "encoding/json"
@@ -189,7 +190,6 @@ func cmdSave(message string) {
    fmt.Printf("Error saving manifest: %v\n", err)
    os.Exit(1)
   }
- 
   fmt.Printf("Saved snapshot %s: %s (%d files)\n", id, message, len(snapshot.Files))
  }
  
@@ -202,7 +202,7 @@ func cmdSave(message string) {
  
   fmt.Println("\033[1;36m")
   fmt.Println("╔══════════════════════════════════════════════════════════╗")
-  fmt.Println("║                     KOS TIMELINE                       ║")
+  fmt.Println("║                     KOS TIMELINE                         ║")
   fmt.Println("╚══════════════════════════════════════════════════════════╝")
   fmt.Println("\033[0m")
  
@@ -283,58 +283,81 @@ func cmdSave(message string) {
   }
   fmt.Println()
  }
- 
- func cmdDiff(id1, id2 string) {
-  manifest, err := loadManifest()
-  if err != nil {
-   fmt.Printf("Error: Not a KOS repository.\n")
-   os.Exit(1)
+
+
+// FUNCTION cmdDiff ===================================
+func cmdDiff(id1, id2 string) {
+fmt.Println("DEBUG: Running new cmdDiff!")
+ manifest, err := loadManifest()
+ if err != nil {
+  fmt.Printf("Error: Not a KOS repository.\n")
+  os.Exit(1)
+ }
+
+ var snap1, snap2 *Snapshot
+ for i := range manifest.Snapshots {
+  if manifest.Snapshots[i].ID == id1 { snap1 = &manifest.Snapshots[i] }
+  if manifest.Snapshots[i].ID == id2 { snap2 = &manifest.Snapshots[i] }
+ }
+
+ if snap1 == nil || snap2 == nil {
+  fmt.Printf("Error: One or both snapshot IDs not found.\n")
+  os.Exit(1)
+ }
+
+ var added, deleted, modified []string
+ for path, hash2 := range snap2.Files {
+  hash1, exists := snap1.Files[path]
+  if !exists {
+   added = append(added, path)
+  } else if hash1 != hash2 {
+   modified = append(modified, path)
   }
- 
-  var snap1, snap2 *Snapshot
-  for i := range manifest.Snapshots {
-   if manifest.Snapshots[i].ID == id1 { snap1 = &manifest.Snapshots[i] }
-   if manifest.Snapshots[i].ID == id2 { snap2 = &manifest.Snapshots[i] }
+ }
+ for path := range snap1.Files {
+  if _, exists := snap2.Files[path]; !exists {
+   deleted = append(deleted, path)
   }
- 
-  if snap1 == nil || snap2 == nil {
-   fmt.Printf("Error: One or both snapshot IDs not found.\n")
-   os.Exit(1)
-  }
-  var added, deleted, modified []string
-   for path, hash2 := range snap2.Files {
-    hash1, exists := snap1.Files[path]
-    if !exists {
-     added = append(added, path)
-    } else if hash1 != hash2 {
-     modified = append(modified, path)
-    }
-   }
-   for path := range snap1.Files {
-    if _, exists := snap2.Files[path]; !exists {
-     deleted = append(deleted, path)
-    }
-   }
+ }
+
+ fmt.Printf("\n\033[1;36m--- DIFF: %s vs %s ---\033[0m\n", id1, id2)
+ if len(added) == 0 && len(deleted) == 0 && len(modified) == 0 {
+  fmt.Println("\033[32mNo differences found.\033[0m\n")
+  return
+ }
+
+ if len(added) > 0 {
+  fmt.Printf("\033[32m+ Added (%d):\033[0m\n", len(added))
+  for _, f := range added { fmt.Printf("  %s\n", f) }
+ }
+ if len(deleted) > 0 {
+  fmt.Printf("\033[31m- Deleted (%d):\033[0m\n", len(deleted))
+  for _, f := range deleted { fmt.Printf("  %s\n", f) }
+ }
+ if len(modified) > 0 {
+  fmt.Printf("\033[33m~ Modified (%d):\033[0m\n", len(modified))
   
-   fmt.Printf("\n\033[1;36m--- DIFF: %s vs %s ---\033[0m\n", id1, id2)
-   if len(added) == 0 && len(deleted) == 0 && len(modified) == 0 {
-    fmt.Println("\033[32mNo differences found.\033[0m\n")
-    return
+  // Show actual code diffs for modified files
+  for _, path := range modified {
+   fmt.Printf("\n\033[1;34m📄 %s\033[0m\n", path)
+   
+   oldContent, err := extractFileFromTar(filepath.Join(KosDir, snap1.Filename), path)
+   if err != nil {
+    fmt.Printf("  \033[31mError reading old version: %v\033[0m\n", err)
+    continue
    }
-   if len(added) > 0 {
-    fmt.Printf("\033[32m+ Added (%d):\033[0m\n", len(added))
-    for _, f := range added { fmt.Printf("  %s\n", f) }
+   
+   newContent, err := extractFileFromTar(filepath.Join(KosDir, snap2.Filename), path)
+   if err != nil {
+    fmt.Printf("  \033[31mError reading new version: %v\033[0m\n", err)
+    continue
    }
-   if len(deleted) > 0 {
-    fmt.Printf("\033[31m- Deleted (%d):\033[0m\n", len(deleted))
-    for _, f := range deleted { fmt.Printf("  %s\n", f) }
-   }
-   if len(modified) > 0 {
-    fmt.Printf("\033[33m~ Modified (%d):\033[0m\n", len(modified))
-    for _, f := range modified { fmt.Printf("  %s\n", f) }
-   }
-   fmt.Println()
+   
+   showDiff(oldContent, newContent)
   }
+ }
+ fmt.Println()
+}
   
   func cmdExport(id, destDir string) {
    manifest, err := loadManifest()
@@ -510,3 +533,76 @@ func cmdSave(message string) {
    }
    return nil
   }
+
+// Shows line-by-line diff with smart insertion/deletion detection
+func showDiff(oldContent, newContent string) {
+ oldLines := strings.Split(oldContent, "\n")
+ newLines := strings.Split(newContent, "\n")
+
+ i, j := 0, 0
+ for i < len(oldLines) || j < len(newLines) {
+  if i < len(oldLines) && j < len(newLines) && oldLines[i] == newLines[j] {
+   if strings.TrimSpace(oldLines[i]) != "" {
+    fmt.Printf("  \033[2;37m%4d | %s\033[0m\n", i+1, oldLines[i])
+   } else {
+    fmt.Println()
+   }
+   i++
+   j++
+  } else if i < len(oldLines) && j+1 < len(newLines) && oldLines[i] == newLines[j+1] {
+   fmt.Printf("  \033[32m+ %4d | %s\033[0m\n", j+1, newLines[j])
+   j++
+  } else if i+1 < len(oldLines) && j < len(newLines) && oldLines[i+1] == newLines[j] {
+   fmt.Printf("  \033[31m- %4d | %s\033[0m\n", i+1, oldLines[i])
+   i++
+  } else {
+   if i < len(oldLines) {
+    fmt.Printf("  \033[31m- %4d | %s\033[0m\n", i+1, oldLines[i])
+   }
+   if j < len(newLines) {
+    fmt.Printf("  \033[32m+ %4d | %s\033[0m\n", j+1, newLines[j])
+   }
+   i++
+   j++
+  }
+ }
+}
+//Recovery fixed
+//Day 2 Testing 2
+
+// Extracts a single file from a .tar.gz archive
+func extractFileFromTar(tarPath, fileName string) (string, error) {
+ file, err := os.Open(tarPath)
+ if err != nil {
+  return "", err
+ }
+ defer file.Close()
+
+ gzr, err := gzip.NewReader(file)
+ if err != nil {
+  return "", err
+ }
+ defer gzr.Close()
+
+ tr := tar.NewReader(gzr)
+
+ for {
+  header, err := tr.Next()
+  if err == io.EOF {
+   break
+  }
+  if err != nil {
+   return "", err
+  }
+
+  if header.Name == fileName && header.Typeflag == tar.TypeReg {
+   var buf bytes.Buffer
+   if _, err := io.Copy(&buf, tr); err != nil {
+    return "", err
+   }
+   return buf.String(), nil
+  }
+ }
+
+ return "", fmt.Errorf("file not found in archive")
+}

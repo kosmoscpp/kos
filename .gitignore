@@ -4,13 +4,13 @@
 *.dll
 *.so
 *.dylib
-main
-kos
 
 # Test coverage files
 *.out
 *.txt
 *.tar.gz
 
-# Dependency directories (if using vendor)
-vendor/
+#kos
+kos
+.kos
+.kosignore

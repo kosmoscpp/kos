@@ -1,16 +1,1 @@
-# Compiled binaries
-*.exe
-*.exe~
-*.dll
-*.so
-*.dylib
-
-# Test coverage files
-*.out
-*.txt
-*.tar.gz
-
-#kos
-kos
-.kos
-.kosignore
+test/

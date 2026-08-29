@@ -1,2 +1,16 @@
+# Compiled binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
 main
-.kos
+kos
+
+# Test coverage files
+*.out
+*.txt
+*.tar.gz
+
+# Dependency directories (if using vendor)
+vendor/

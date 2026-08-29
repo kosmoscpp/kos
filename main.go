@@ -113,6 +113,20 @@ func main() {
   cmdStats()
  case "ks":
   cmdQuickSave()
+ case "projects":
+     cmdProjects()
+ case "rename":
+     if len(os.Args) < 3 {
+         fmt.Println("Error: missing new name. Usage: kos rename <new-name>")
+         os.Exit(1)
+     }
+     cmdRename(os.Args[2])
+ case "search":
+     if len(os.Args) < 3 {
+         fmt.Println("Error: missing keyword. Usage: kos search <keyword>")
+         os.Exit(1)
+     }
+     cmdSearch(os.Args[2])
  default:
   fmt.Printf("Unknown command: %s\n", command)
   printUsage()
@@ -134,6 +148,9 @@ func printUsage() {
  fmt.Println("  load <file.tar.gz> Restore from a portable snapshot")
  fmt.Println("  stats              Show project statistics")
  fmt.Println("  ks                 Quick save with timestamp")
+ fmt.Println("  projects           List all projects in global store")
+ fmt.Println("  rename <name>      Rename the current project")
+ fmt.Println("  search <keyword>   Search commit messages")
 }
 
 func cmdInit() {
@@ -810,4 +827,130 @@ func showDiff(oldContent, newContent string) {
  for k := len(result) - 1; k >= 0; k-- {
   fmt.Println(result[k])
  }
+}
+
+// List all projects in the global store
+func cmdProjects() {
+ home, err := os.UserHomeDir()
+ if err != nil {
+  fmt.Printf("Error: Cannot determine home directory\n")
+  os.Exit(1)
+ }
+
+ globalDir := filepath.Join(home, GlobalKosBase)
+ entries, err := os.ReadDir(globalDir)
+ if err != nil {
+  fmt.Printf("Error: Cannot read global directory\n")
+  os.Exit(1)
+ }
+
+ fmt.Println("\n\033[1;36m📦 KOS PROJECTS\033[0m\n")
+ 
+ for _, entry := range entries {
+  if !entry.IsDir() {
+   continue
+  }
+
+  projectName := entry.Name()
+  manifestPath := filepath.Join(globalDir, projectName, ManifestFile)
+
+  // Load manifest to get stats
+  var m Manifest
+  data, err := os.ReadFile(manifestPath)
+  if err != nil {
+   continue // Skip if manifest is corrupted
+  }
+  json.Unmarshal(data, &m)
+
+  // Calculate size
+  var totalSize int64
+  snapDir := filepath.Join(globalDir, projectName)
+  snapEntries, _ := os.ReadDir(snapDir)
+  for _, snapEntry := range snapEntries {
+   if strings.HasPrefix(snapEntry.Name(), "snap_") && strings.HasSuffix(snapEntry.Name(), ".tar.gz") {
+    info, _ := snapEntry.Info()
+    if info != nil {
+     totalSize += info.Size()
+    }
+   }
+  }
+
+  commitCount := len(m.Snapshots)
+  sizeStr := formatBytes(totalSize)
+
+  fmt.Printf("  \033[1;33m%-20s\033[0m \033[2;37m%d commits, %s\033[0m\n", projectName, commitCount, sizeStr)
+ }
+ fmt.Println()
+}
+
+// Rename the current project
+func cmdRename(newName string) {
+ // Validate the new name
+ if newName == "" || strings.Contains(newName, "/") || strings.Contains(newName, "\\") {
+  fmt.Printf("Error: Invalid project name '%s'\n", newName)
+  os.Exit(1)
+ }
+
+ home, _ := os.UserHomeDir()
+
+ // Get current project name
+ currentName, err := os.ReadFile(".kos-project")
+ if err != nil {
+  fmt.Printf("Error: Not a KOS project. Run 'kos init' first.\n")
+  os.Exit(1)
+ }
+ currentNameStr := strings.TrimSpace(string(currentName))
+
+ // Check if new name already exists
+ newGlobalPath := filepath.Join(home, GlobalKosBase, newName)
+ if _, err := os.Stat(newGlobalPath); err == nil {
+  fmt.Printf("Error: Project '%s' already exists in global store\n", newName)
+  os.Exit(1)
+ }
+
+ // Rename the global directory
+ oldGlobalPath := filepath.Join(home, GlobalKosBase, currentNameStr)
+ if err := os.Rename(oldGlobalPath, newGlobalPath); err != nil {
+  fmt.Printf("Error: Failed to rename global directory: %v\n", err)
+  os.Exit(1)
+ }
+
+ // Update .kos-project file
+ if err := os.WriteFile(".kos-project", []byte(newName), 0644); err != nil {
+  fmt.Printf("Error: Failed to update .kos-project: %v\n", err)
+  os.Exit(1)
+ }
+
+ fmt.Printf("✅ Project renamed from '%s' to '%s'\n", currentNameStr, newName)
+}
+
+// Search commit messages for a keyword
+func cmdSearch(keyword string) {
+ manifest, err := loadManifest()
+ if err != nil {
+  fmt.Printf("Error: Not a KOS repository. Run 'kos init'.\n")
+  os.Exit(1)
+ }
+
+ var matches []Snapshot
+ for _, snap := range manifest.Snapshots {
+  if strings.Contains(strings.ToLower(snap.Message), strings.ToLower(keyword)) {
+   matches = append(matches, snap)
+  }
+ }
+
+ if len(matches) == 0 {
+  fmt.Printf("\n\033[33mNo commits found matching '%s'\033[0m\n\n", keyword)
+  return
+ }
+
+ fmt.Printf("\n\033[1;36m🔍 SEARCH RESULTS: '%s'\033[0m\n", keyword)
+ fmt.Printf("\033[2;37mFound %d matching commits:\033[0m\n\n", len(matches))
+
+ for _, snap := range matches {
+  t := time.Unix(snap.Timestamp, 0)
+  timeStr := t.Format("Jan 02, 15:04")
+  fmt.Printf("  \033[1;33m%-8s\033[0m ┃ \033[2;37m%s\033[0m ┃ %s\n", snap.ID, timeStr, snap.Message)
+ }
+ fmt.Println()
 }

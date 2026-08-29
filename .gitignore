@@ -1,3 +1,5 @@
 test/
 kos
 *.txt
+*.tar.gz
+*.exe

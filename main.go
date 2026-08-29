@@ -1,10 +1,16 @@
 package main
 
 import (
+ "archive/tar"
+ "compress/gzip"
+ "crypto/sha256"
  "encoding/json"
  "fmt"
+ "io"
  "os"
  "path/filepath"
+ "strings"
+ "time"
 )
 
 const (
@@ -13,8 +19,6 @@ const (
  IgnoreFile   = ".kosignore"
 )
 
-// Snapshot represents a single commit/save point
-// NOTE: The json tags MUST be wrapped in backticks (), not single quotes!
 type Snapshot struct {
  ID        string            `json:"id"`
  Timestamp int64             `json:"timestamp"`
@@ -23,7 +27,6 @@ type Snapshot struct {
  Files     map[string]string `json:"files"`
 }
 
-// Manifest represents the entire history
 type Manifest struct {
  Snapshots []Snapshot `json:"snapshots"`
 }
@@ -45,6 +48,14 @@ func main() {
    os.Exit(1)
   }
   cmdIgnore(os.Args[2])
+ case "save":
+  if len(os.Args) < 3 {
+   fmt.Println("Error: missing message. Usage: kos save <message>")
+   os.Exit(1)
+  }
+  // Join arguments in case the user types: kos save "my message"
+  message := strings.Join(os.Args[2:], " ")
+  cmdSave(message)
  default:
   fmt.Printf("Unknown command: %s\n", command)
   printUsage()
@@ -71,23 +82,19 @@ func cmdInit() {
   fmt.Println("KOS repository already initialized in this directory.")
   return
  }
-
  if err := os.Mkdir(KosDir, 0755); err != nil {
   fmt.Printf("Error creating %s: %v\n", KosDir, err)
   os.Exit(1)
  }
-
  manifest := Manifest{Snapshots: []Snapshot{}}
  if err := saveManifest(manifest); err != nil {
   fmt.Printf("Error creating manifest: %v\n", err)
   os.Exit(1)
  }
-
  if err := os.WriteFile(IgnoreFile, []byte(""), 0644); err != nil {
   fmt.Printf("Error creating %s: %v\n", IgnoreFile, err)
   os.Exit(1)
  }
-
  fmt.Println("Initialized empty KOS repository in .kos/")
 }
 
@@ -98,21 +105,140 @@ func cmdIgnore(pattern string) {
    os.Exit(1)
   }
  }
-
  f, err := os.OpenFile(IgnoreFile, os.O_APPEND|os.O_WRONLY, 0644)
  if err != nil {
   fmt.Printf("Error opening %s: %v\n", IgnoreFile, err)
   os.Exit(1)
  }
  defer f.Close()
-
  if _, err := f.WriteString(pattern + "\n"); err != nil {
   fmt.Printf("Error writing to %s: %v\n", IgnoreFile, err)
   os.Exit(1)
  }
-
  fmt.Printf("Added '%s' to %s\n", pattern, IgnoreFile)
 }
+
+func cmdSave(message string) {
+ // 1. Load manifest
+ manifest, err := loadManifest()
+ if err != nil {
+  fmt.Printf("Error: Not a KOS repository (or manifest corrupted). Run 'kos init'.\n")
+  os.Exit(1)
+ }
+
+ // 2. Generate Snapshot ID and Filename
+ id := fmt.Sprintf("%x", time.Now().UnixNano())[:8]
+ filename := fmt.Sprintf("snap_%s.tar.gz", id)
+ filepathTar := filepath.Join(KosDir, filename)
+
+ snapshot := Snapshot{
+  ID:        id,
+  Timestamp: time.Now().Unix(),
+  Message:   message,
+  Filename:  filename,
+  Files:     make(map[string]string),
+ }
+
+ // 3. Load ignore patterns
+ ignores := loadIgnores()
+
+ // 4. Create the .tar.gz file (Streaming for low RAM)
+ file, err := os.Create(filepathTar)
+ if err != nil {
+  fmt.Printf("Error creating snapshot file: %v\n", err)
+  os.Exit(1)
+ }
+ defer file.Close()
+
+ gzw := gzip.NewWriter(file)
+ defer gzw.Close()
+ tw := tar.NewWriter(gzw)
+ defer tw.Close()
+
+// 5. Walk directory and stream into tar + hash
+ err = filepath.WalkDir(".", func(path string, d os.DirEntry, err error) error {
+  if err != nil {
+   return err
+  }
+
+  // Skip the .kos directory itself and the ignore file
+  if path == KosDir || path == IgnoreFile {
+   if d.IsDir() {
+    return filepath.SkipDir
+   }
+   return nil
+  }
+
+  // Check ignore patterns
+  for _, pattern := range ignores {
+   if pattern == "" {
+    continue
+   }
+   match, _ := filepath.Match(pattern, filepath.Base(path))
+   if match {
+    if d.IsDir() {
+     return filepath.SkipDir
+    }
+    return nil
+   }
+  }
+
+  if d.IsDir() {
+   return nil // We only process files for the snapshot
+  }
+
+  // Calculate SHA256 hash (Memory efficient: streams the file)
+  hash, err := getFileHash(path)
+  if err != nil {
+   fmt.Printf("Warning: Could not hash %s: %v\n", path, err)
+   return nil // Continue with other files
+  }
+  snapshot.Files[path] = hash
+
+  // Add file to tar archive (Memory efficient: streams the file)
+  f, err := os.Open(path)
+  if err != nil {
+   return nil
+  }
+  defer f.Close()
+
+  info, err := f.Stat()
+  if err != nil {
+   return nil
+  }
+
+  header, err := tar.FileInfoHeader(info, info.Name())
+  if err != nil {
+   return nil
+  }
+  header.Name = path // Use relative path
+
+  if err := tw.WriteHeader(header); err != nil {
+   return nil
+  }
+  if _, err := io.Copy(tw, f); err != nil {
+   return nil
+  }
+
+  return nil
+ })
+
+ if err != nil {
+  fmt.Printf("Error walking directory: %v\n", err)
+  os.Exit(1)
+ }
+
+ // 6. Update and save manifest
+ manifest.Snapshots = append(manifest.Snapshots, snapshot)
+ if err := saveManifest(manifest); err != nil {
+  fmt.Printf("Error saving manifest: %v\n", err)
+  os.Exit(1)
+ }
+
+ fmt.Printf("Saved snapshot %s: %s (%d files)\n", id, message, len(snapshot.Files))
+}
+
+// --- Helper Functions ---
 
 func saveManifest(m Manifest) error {
  data, err := json.MarshalIndent(m, "", "  ")
@@ -131,3 +257,35 @@ func loadManifest() (Manifest, error) {
  err = json.Unmarshal(data, &m)
  return m, err
 }
+
+func loadIgnores() []string {
+ data, err := os.ReadFile(IgnoreFile)
+ if err != nil {
+  return []string{}
+ }
+ lines := strings.Split(string(data), "\n")
+ var ignores []string
+ for _, line := range lines {
+  trimmed := strings.TrimSpace(line)
+  if trimmed != "" && !strings.HasPrefix(trimmed, "#") {
+   ignores = append(ignores, trimmed)
+  }
+ }
+ return ignores
+}
+
+func getFileHash(path string) (string, error) {
+ f, err := os.Open(path)
+ if err != nil {
+  return "", err
+ }
+ defer f.Close()
+
+ h := sha256.New()
+ // io.Copy streams the file in 32KB chunks. Perfect for 2GB RAM.
+ if _, err := io.Copy(h, f); err != nil {
+  return "", err
+ }
+ return fmt.Sprintf("%x", h.Sum(nil)), nil
+}
+ 

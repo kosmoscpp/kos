@@ -15,10 +15,27 @@ import (
 )
 
 const (
- KosDir       = ".kos"
- ManifestFile = "manifest.json"
- IgnoreFile   = ".kosignore"
+ ManifestFile   = "manifest.json"
+ IgnoreFile     = ".kosignore"
+ GlobalKosBase  = ".kos-global"
 )
+
+// getgetKosDir() returns the global path for the current project
+func getKosDir() string {
+ home, err := os.UserHomeDir()
+ if err != nil {
+  home = "." // Fallback
+ }
+ 
+ // Get current directory name as project name
+ cwd, _ := os.Getwd()
+ projectName := filepath.Base(cwd)
+ if projectName == "/" || projectName == "" {
+  projectName = "root_project"
+ }
+ 
+ return filepath.Join(home, GlobalKosBase, projectName)
+}
 
 type Snapshot struct {
  ID        string            `json:"id"`
@@ -100,12 +117,12 @@ func printUsage() {
 }
 
 func cmdInit() {
- if _, err := os.Stat(KosDir); err == nil {
+ if _, err := os.Stat(getKosDir()); err == nil {
   fmt.Println("KOS repository already initialized.")
   return
  }
- if err := os.Mkdir(KosDir, 0755); err != nil {
-  fmt.Printf("Error creating %s: %v\n", KosDir, err)
+ if err := os.MkdirAll(getKosDir(), 0755); err != nil {
+  fmt.Printf("Error creating %s: %v\n", getKosDir(), err)
   os.Exit(1)
  }
  manifest := Manifest{Snapshots: []Snapshot{}}
@@ -143,7 +160,7 @@ func cmdSave(message string) {
 
  id := fmt.Sprintf("%x", time.Now().UnixNano())[:8]
  filename := fmt.Sprintf("snap_%s.tar.gz", id)
- filepathTar := filepath.Join(KosDir, filename)
+ filepathTar := filepath.Join(getKosDir(), filename)
 
  snapshot := Snapshot{
   ID:        id,
@@ -179,7 +196,7 @@ func cmdSave(message string) {
  
   manifestData, _ := json.MarshalIndent(manifest, "", "  ")
   mHeader := &tar.Header{
-   Name: filepath.Join(KosDir, ManifestFile),
+   Name: filepath.Join(getKosDir(), ManifestFile),
    Mode: 0644,
    Size: int64(len(manifestData)),
   }
@@ -287,7 +304,6 @@ func cmdSave(message string) {
 
 // FUNCTION cmdDiff ===================================
 func cmdDiff(id1, id2 string) {
-fmt.Println("DEBUG: Running new cmdDiff!")
  manifest, err := loadManifest()
  if err != nil {
   fmt.Printf("Error: Not a KOS repository.\n")
@@ -341,13 +357,13 @@ fmt.Println("DEBUG: Running new cmdDiff!")
   for _, path := range modified {
    fmt.Printf("\n\033[1;34m📄 %s\033[0m\n", path)
    
-   oldContent, err := extractFileFromTar(filepath.Join(KosDir, snap1.Filename), path)
+   oldContent, err := extractFileFromTar(filepath.Join(getKosDir(), snap1.Filename), path)
    if err != nil {
     fmt.Printf("  \033[31mError reading old version: %v\033[0m\n", err)
     continue
    }
    
-   newContent, err := extractFileFromTar(filepath.Join(KosDir, snap2.Filename), path)
+   newContent, err := extractFileFromTar(filepath.Join(getKosDir(), snap2.Filename), path)
    if err != nil {
     fmt.Printf("  \033[31mError reading new version: %v\033[0m\n", err)
     continue
@@ -375,7 +391,7 @@ fmt.Println("DEBUG: Running new cmdDiff!")
     os.Exit(1)
    }
   
-   tarPath := filepath.Join(KosDir, targetSnap.Filename)
+   tarPath := filepath.Join(getKosDir(), targetSnap.Filename)
    fmt.Printf("Exporting snapshot %s to %s...\n", id, destDir)
    
    if err := os.MkdirAll(destDir, 0755); err != nil {
@@ -390,22 +406,54 @@ fmt.Println("DEBUG: Running new cmdDiff!")
    fmt.Println("Export complete!")
   }
   
-  func cmdLoad(tarPath string) {
-   if _, err := os.Stat(tarPath); os.IsNotExist(err) {
-    fmt.Printf("Error: File %s not found.\n", tarPath)
+  func cmdLoad(projectName string) {
+   home, _ := os.UserHomeDir()
+   globalProjectDir := filepath.Join(home, GlobalKosBase, projectName)
+   manifestPath := filepath.Join(globalProjectDir, ManifestFile)
+  
+   // Check if this project exists in the global store
+   if _, err := os.Stat(manifestPath); os.IsNotExist(err) {
+    fmt.Printf("Error: No global repository found for project '%s'.\n", projectName)
+    fmt.Println("Did you mean to run 'kos init' first?")
     os.Exit(1)
    }
   
-   if _, err := os.Stat(KosDir); os.IsNotExist(err) {
-    cmdInit()
+   // Load the global manifest for this project
+   var m Manifest
+   data, err := os.ReadFile(manifestPath)
+   if err != nil {
+    fmt.Printf("Error reading manifest: %v\n", err)
+    os.Exit(1)
+   }
+   json.Unmarshal(data, &m)
+  
+   if len(m.Snapshots) == 0 {
+    fmt.Println("Error: Project exists but has no snapshots.")
+    os.Exit(1)
    }
   
-   fmt.Printf("Loading portable snapshot from %s...\n", tarPath)
+   // Get the latest snapshot
+   latestSnap := m.Snapshots[len(m.Snapshots)-1]
+   tarPath := filepath.Join(globalProjectDir, latestSnap.Filename)
+  
+   fmt.Printf("🌍 Loading global project '%s' into current directory...\n", projectName)
+   fmt.Printf("   Restoring from: %s\n", latestSnap.Filename)
+   
    if err := extractTarGz(tarPath, "."); err != nil {
     fmt.Printf("Error extracting: %v\n", err)
     os.Exit(1)
    }
-   fmt.Println("Load complete! History and files restored.")
+   
+   // Also restore the local .kosignore if it was tracked
+   ignorePath := filepath.Join(globalProjectDir, IgnoreFile)
+   if _, err := os.Stat(ignorePath); err == nil {
+    // Copy it to current dir
+    data, _ := os.ReadFile(ignorePath)
+    os.WriteFile(IgnoreFile, data, 0644)
+   }
+  
+   fmt.Println("✅ Load complete! History and files restored.")
+   fmt.Println("💡 Tip: Run 'kos view' to see your restored timeline.")
   }
   
   // --- Helper Functions ---
@@ -413,12 +461,12 @@ fmt.Println("DEBUG: Running new cmdDiff!")
   func saveManifest(m Manifest) error {
    data, err := json.MarshalIndent(m, "", "  ")
    if err != nil { return err }
-   return os.WriteFile(filepath.Join(KosDir, ManifestFile), data, 0644)
+   return os.WriteFile(filepath.Join(getKosDir(), ManifestFile), data, 0644)
   }
   
   func loadManifest() (Manifest, error) {
    var m Manifest
-   data, err := os.ReadFile(filepath.Join(KosDir, ManifestFile))
+   data, err := os.ReadFile(filepath.Join(getKosDir(), ManifestFile))
    if err != nil { return m, err }
    err = json.Unmarshal(data, &m)
    return m, err
@@ -453,7 +501,7 @@ fmt.Println("DEBUG: Running new cmdDiff!")
   
    err := filepath.WalkDir(".", func(path string, d os.DirEntry, err error) error {
     if err != nil { return err }
-    if path == KosDir || path == IgnoreFile {
+    if path == getKosDir() || path == IgnoreFile {
      if d.IsDir() { return filepath.SkipDir }
      return nil
     }

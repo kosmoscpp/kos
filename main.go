@@ -48,6 +48,8 @@ func main() {
    os.Exit(1)
   }
   cmdIgnore(os.Args[2])
+ case "view": // <--- ADD THIS
+  cmdView() // <--- ADD THIS
  case "save":
   if len(os.Args) < 3 {
    fmt.Println("Error: missing message. Usage: kos save <message>")
@@ -288,4 +290,56 @@ func getFileHash(path string) (string, error) {
  }
  return fmt.Sprintf("%x", h.Sum(nil)), nil
 }
- 
+
+func cmdView() {
+ manifest, err := loadManifest()
+ if err != nil {
+  fmt.Printf("Error: Not a KOS repository. Run 'kos init'.\n")
+  os.Exit(1)
+ }
+
+ // Cinematic Header using ANSI colors
+ fmt.Println("\033[1;36m") // Bold Cyan
+ fmt.Println("╔══════════════════════════════════════════════════════════╗")
+ fmt.Println("║                     KOS TIMELINE                         ║")
+ fmt.Println("╚══════════════════════════════════════════════════════════╝")
+ fmt.Println("\033[0m") // Reset
+
+ if len(manifest.Snapshots) == 0 {
+  fmt.Println("  No snapshots yet. Use 'kos save <message>' to create one.\n")
+  return
+ }
+
+ // Iterate backwards (newest first)
+ for i := len(manifest.Snapshots) - 1; i >= 0; i-- {
+  snap := manifest.Snapshots[i]
+  
+  // Format time beautifully
+  t := time.Unix(snap.Timestamp, 0)
+  timeStr := t.Format("Jan 02, 15:04")
+  
+  // ANSI Color Palette
+  colorID := "\033[1;33m"    // Bold Yellow
+  colorTime := "\033[2;37m"  // Dim White
+  colorMsg := "\033[1;37m"   // Bold White
+  colorLine := "\033[36m"    // Cyan
+  reset := "\033[0m"
+
+  // Print the timeline node
+  fmt.Printf("  %s●%s %s%-8s%s ┃ %s%s%s ┃ %s%s%s\n", 
+   colorLine, reset,
+   colorID, snap.ID, reset,
+   colorTime, timeStr, reset,
+   colorMsg, snap.Message, reset)
+   
+  // Print the file count
+  fmt.Printf("  %s│%s           ┃  %d files\n", colorLine, reset, len(snap.Files))
+  
+  // Print the connector or the end of the line
+  if i == 0 {
+   fmt.Printf("  %s└──%s (End of history)\n\n", colorLine, reset)
+  } else {
+   fmt.Printf("  %s│%s\n", colorLine, reset)
+  }
+ }
+}

@@ -89,10 +89,14 @@ func main() {
   cmdStatus()
  case "diff":
   if len(os.Args) < 4 {
-   fmt.Println("Error: missing IDs. Usage: kos diff <id1> <id2>")
+   fmt.Println("Error: missing IDs. Usage: kos diff <id1> <id2> [filename]")
    os.Exit(1)
   }
-  cmdDiff(os.Args[2], os.Args[3])
+  if len(os.Args) == 4 {
+   cmdDiffSummary(os.Args[2], os.Args[3])
+  } else {
+   cmdDiffFile(os.Args[2], os.Args[3], os.Args[4])
+  }
  case "export":
   if len(os.Args) < 4 {
    fmt.Println("Error: missing args. Usage: kos export <id> <folder>")
@@ -107,6 +111,8 @@ func main() {
   cmdLoad(os.Args[2])
  case "stats":
   cmdStats()
+ case "ks":
+  cmdQuickSave()
  default:
   fmt.Printf("Unknown command: %s\n", command)
   printUsage()
@@ -127,6 +133,7 @@ func printUsage() {
  fmt.Println("  export <id> <dir>  Extract a snapshot to a folder")
  fmt.Println("  load <file.tar.gz> Restore from a portable snapshot")
  fmt.Println("  stats              Show project statistics")
+ fmt.Println("  ks                 Quick save with timestamp")
 }
 
 func cmdInit() {
@@ -321,78 +328,7 @@ func cmdSave(message string) {
  }
 
 
-// FUNCTION cmdDiff ===================================
-func cmdDiff(id1, id2 string) {
- manifest, err := loadManifest()
- if err != nil {
-  fmt.Printf("Error: Not a KOS repository.\n")
-  os.Exit(1)
- }
 
- var snap1, snap2 *Snapshot
- for i := range manifest.Snapshots {
-  if manifest.Snapshots[i].ID == id1 { snap1 = &manifest.Snapshots[i] }
-  if manifest.Snapshots[i].ID == id2 { snap2 = &manifest.Snapshots[i] }
- }
-
- if snap1 == nil || snap2 == nil {
-  fmt.Printf("Error: One or both snapshot IDs not found.\n")
-  os.Exit(1)
- }
-
- var added, deleted, modified []string
- for path, hash2 := range snap2.Files {
-  hash1, exists := snap1.Files[path]
-  if !exists {
-   added = append(added, path)
-  } else if hash1 != hash2 {
-   modified = append(modified, path)
-  }
- }
- for path := range snap1.Files {
-  if _, exists := snap2.Files[path]; !exists {
-   deleted = append(deleted, path)
-  }
- }
-
- fmt.Printf("\n\033[1;36m--- DIFF: %s vs %s ---\033[0m\n", id1, id2)
- if len(added) == 0 && len(deleted) == 0 && len(modified) == 0 {
-  fmt.Println("\033[32mNo differences found.\033[0m\n")
-  return
- }
-
- if len(added) > 0 {
-  fmt.Printf("\033[32m+ Added (%d):\033[0m\n", len(added))
-  for _, f := range added { fmt.Printf("  %s\n", f) }
- }
- if len(deleted) > 0 {
-  fmt.Printf("\033[31m- Deleted (%d):\033[0m\n", len(deleted))
-  for _, f := range deleted { fmt.Printf("  %s\n", f) }
- }
- if len(modified) > 0 {
-  fmt.Printf("\033[33m~ Modified (%d):\033[0m\n", len(modified))
-  
-  // Show actual code diffs for modified files
-  for _, path := range modified {
-   fmt.Printf("\n\033[1;34m📄 %s\033[0m\n", path)
-   
-   oldContent, err := extractFileFromTar(filepath.Join(getKosDir(), snap1.Filename), path)
-   if err != nil {
-    fmt.Printf("  \033[31mError reading old version: %v\033[0m\n", err)
-    continue
-   }
-   
-   newContent, err := extractFileFromTar(filepath.Join(getKosDir(), snap2.Filename), path)
-   if err != nil {
-    fmt.Printf("  \033[31mError reading new version: %v\033[0m\n", err)
-    continue
-   }
-   
-   showDiff(oldContent, newContent)
-  }
- }
- fmt.Println()
-}
   
   func cmdExport(id, destDir string) {
    manifest, err := loadManifest()
@@ -605,41 +541,6 @@ func loadManifest() (Manifest, error) {
    return nil
   }
 
-// Shows line-by-line diff with smart insertion/deletion detection
-func showDiff(oldContent, newContent string) {
- oldLines := strings.Split(oldContent, "\n")
- newLines := strings.Split(newContent, "\n")
-
- i, j := 0, 0
- for i < len(oldLines) || j < len(newLines) {
-  if i < len(oldLines) && j < len(newLines) && oldLines[i] == newLines[j] {
-   if strings.TrimSpace(oldLines[i]) != "" {
-    fmt.Printf("  \033[2;37m%4d | %s\033[0m\n", i+1, oldLines[i])
-   } else {
-    fmt.Println()
-   }
-   i++
-   j++
-  } else if i < len(oldLines) && j+1 < len(newLines) && oldLines[i] == newLines[j+1] {
-   fmt.Printf("  \033[32m+ %4d | %s\033[0m\n", j+1, newLines[j])
-   j++
-  } else if i+1 < len(oldLines) && j < len(newLines) && oldLines[i+1] == newLines[j] {
-   fmt.Printf("  \033[31m- %4d | %s\033[0m\n", i+1, oldLines[i])
-   i++
-  } else {
-   if i < len(oldLines) {
-    fmt.Printf("  \033[31m- %4d | %s\033[0m\n", i+1, oldLines[i])
-   }
-   if j < len(newLines) {
-    fmt.Printf("  \033[32m+ %4d | %s\033[0m\n", j+1, newLines[j])
-   }
-   i++
-   j++
-  }
- }
-}
-//Recovery fixed
-//Day 2 Testing 2
 
 // Extracts a single file from a .tar.gz archive
 func extractFileFromTar(tarPath, fileName string) (string, error) {
@@ -747,4 +648,166 @@ func formatBytes(bytes int64) string {
   exp++
  }
  return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
+}
+
+func cmdQuickSave() {
+ // Generate a timestamp-based message
+ timestamp := time.Now().Format("2006-01-02 15:04:05")
+ message := fmt.Sprintf("Quick save: %s", timestamp)
+ cmdSave(message)
+}
+
+
+// ============DIFF================================
+// 1. Compact Summary (Default behavior)
+func cmdDiffSummary(id1, id2 string) {
+ manifest, err := loadManifest()
+ if err != nil { fmt.Printf("Error: Not a KOS repository.\n"); os.Exit(1) }
+
+ var snap1, snap2 *Snapshot
+ for i := range manifest.Snapshots {
+  if manifest.Snapshots[i].ID == id1 { snap1 = &manifest.Snapshots[i] }
+  if manifest.Snapshots[i].ID == id2 { snap2 = &manifest.Snapshots[i] }
+ }
+ if snap1 == nil || snap2 == nil {
+  fmt.Printf("Error: One or both snapshot IDs not found.\n"); os.Exit(1)
+ }
+
+ var added, deleted, modified []string
+ for path, hash2 := range snap2.Files {
+  hash1, exists := snap1.Files[path]
+  if !exists { added = append(added, path) } else if hash1 != hash2 { modified = append(modified, path) }
+ }
+ for path := range snap1.Files {
+  if _, exists := snap2.Files[path]; !exists { deleted = append(deleted, path) }
+ }
+
+ fmt.Printf("\n\033[1;36m--- DIFF SUMMARY: %s vs %s ---\033[0m\n", id1, id2)
+ if len(added) == 0 && len(deleted) == 0 && len(modified) == 0 {
+  fmt.Println("\033[32mNo differences found.\033[0m\n"); return
+ }
+
+ if len(added) > 0 {
+  fmt.Printf("\033[32m+ Added (%d):\033[0m\n", len(added))
+  for _, f := range added { fmt.Printf("  %s\n", f) }
+ }
+ if len(deleted) > 0 {
+  fmt.Printf("\033[31m- Deleted (%d):\033[0m\n", len(deleted))
+  for _, f := range deleted { fmt.Printf("  %s\n", f) }
+ }
+ if len(modified) > 0 {
+  fmt.Printf("\033[33m~ Modified (%d):\033[0m\n", len(modified))
+  for _, path := range modified {
+   oldContent, _ := extractFileFromTar(filepath.Join(getKosDir(), snap1.Filename), path)
+   newContent, _ := extractFileFromTar(filepath.Join(getKosDir(), snap2.Filename), path)
+   
+   // Quick line count diff for summary
+   oldLines := len(strings.Split(oldContent, "\n"))
+   newLines := len(strings.Split(newContent, "\n"))
+   diff := newLines - oldLines
+   
+   if diff > 0 {
+    fmt.Printf("  \033[32m+%d\033[0m \033[2;37m%s\033[0m\n", diff, path)
+   } else if diff < 0 {
+    fmt.Printf("  \033[31m%d\033[0m \033[2;37m%s\033[0m\n", diff, path)
+   } else {
+    fmt.Printf("  \033[33m~\033[0m  \033[2;37m%s\033[0m\n", path)
+  }
+  }
+ }
+ fmt.Println("\n\033[2;37m💡 Tip: To see the actual code changes, run:\033[0m")
+ fmt.Printf("  \033[1;36mkos diff %s %s <filename>\033[0m\n\n", id1, id2)
+}
+
+// 2. Detailed File Diff (When a filename is provided)
+func cmdDiffFile(id1, id2, filename string) {
+ manifest, err := loadManifest()
+ if err != nil { fmt.Printf("Error: Not a KOS repository.\n"); os.Exit(1) }
+
+ var snap1, snap2 *Snapshot
+ for i := range manifest.Snapshots {
+  if manifest.Snapshots[i].ID == id1 { snap1 = &manifest.Snapshots[i] }
+  if manifest.Snapshots[i].ID == id2 { snap2 = &manifest.Snapshots[i] }
+ }
+ if snap1 == nil || snap2 == nil {
+  fmt.Printf("Error: One or both snapshot IDs not found.\n"); os.Exit(1)
+ }
+
+ fmt.Printf("\n\033[1;36m--- CODE DIFF: %s ---\033[0m\n", filename)
+
+ oldContent, err := extractFileFromTar(filepath.Join(getKosDir(), snap1.Filename), filename)
+ if err != nil { fmt.Printf("\033[31mError reading old version: %v\033[0m\n", err); os.Exit(1) }
+ 
+ newContent, err := extractFileFromTar(filepath.Join(getKosDir(), snap2.Filename), filename)
+ if err != nil { fmt.Printf("\033[31mError reading new version: %v\033[0m\n", err); os.Exit(1) }
+
+ showDiff(oldContent, newContent)
+ fmt.Println()
+}
+
+// 3. The Line-by-Line Comparison (Kept from before, but now only runs on demand)
+// Shows line-by-line diff using Longest Common Subsequence (LCS)
+// This prevents the "cascading" effect when multiple lines are added/removed.
+func showDiff(oldContent, newContent string) {
+ oldLines := strings.Split(oldContent, "\n")
+ newLines := strings.Split(newContent, "\n")
+
+ // Clean up trailing empty lines from split
+ if len(oldLines) > 0 && oldLines[len(oldLines)-1] == "" {
+  oldLines = oldLines[:len(oldLines)-1]
+ }
+ if len(newLines) > 0 && newLines[len(newLines)-1] == "" {
+  newLines = newLines[:len(newLines)-1]
+ }
+
+ m, n := len(oldLines), len(newLines)
+ 
+ // DP table for LCS length
+ dp := make([][]int, m+1)
+ for i := range dp {
+  dp[i] = make([]int, n+1)
+ }
+
+ // Build the DP table
+ for i := 1; i <= m; i++ {
+  for j := 1; j <= n; j++ {
+   if oldLines[i-1] == newLines[j-1] {
+    dp[i][j] = dp[i-1][j-1] + 1
+   } else if dp[i-1][j] > dp[i][j-1] {
+    dp[i][j] = dp[i-1][j]
+   } else {
+    dp[i][j] = dp[i][j-1]
+   }
+  }
+ }
+
+ // Backtrack to find the actual diff
+ i, j := m, n
+ var result []string
+
+ for i > 0 || j > 0 {
+  if i > 0 && j > 0 && oldLines[i-1] == newLines[j-1] {
+   // Line is unchanged
+   if strings.TrimSpace(oldLines[i-1]) != "" {
+    result = append(result, fmt.Sprintf("  \033[2;37m%4d | %s\033[0m", i, oldLines[i-1]))
+   } else {
+    result = append(result, "")
+   }
+   i--
+   j--
+  } else if j > 0 && (i == 0 || dp[i][j-1] >= dp[i-1][j]) {
+   // Line was added in new file
+   result = append(result, fmt.Sprintf("  \033[32m+ %4d | %s\033[0m", j, newLines[j-1]))
+   j--
+  } else if i > 0 && (j == 0 || dp[i][j-1] < dp[i-1][j]) {
+   // Line was deleted from old file
+   result = append(result, fmt.Sprintf("  \033[31m- %4d | %s\033[0m", i, oldLines[i-1]))
+   i--
+  }
+ }
+
+ // Print in reverse order (top to bottom)
+ for k := len(result) - 1; k >= 0; k-- {
+  fmt.Println(result[k])
+ }
 }

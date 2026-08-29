@@ -65,6 +65,18 @@ func main() {
    os.Exit(1)
   }
   cmdDiff(os.Args[2], os.Args[3])
+ case "export":
+  if len(os.Args) < 4 {
+   fmt.Println("Error: missing args. Usage: kos export <id> <folder>")
+   os.Exit(1)
+  }
+  cmdExport(os.Args[2], os.Args[3])
+ case "load":
+  if len(os.Args) < 3 {
+   fmt.Println("Error: missing file. Usage: kos load <file.tar.gz>")
+   os.Exit(1)
+  }
+  cmdLoad(os.Args[2])
  default:
   fmt.Printf("Unknown command: %s\n", command)
   printUsage()
@@ -82,13 +94,13 @@ func printUsage() {
  fmt.Println("  view              View the ASCII timeline")
  fmt.Println("  status            Show modified files")
  fmt.Println("  diff <id1> <id2>  Compare two snapshots")
- fmt.Println("  export <id> <dir> Extract a snapshot")
+ fmt.Println("  export <id> <dir> Extract a snapshot to a folder")
  fmt.Println("  load <file.tar.gz> Restore from a portable snapshot")
 }
 
 func cmdInit() {
  if _, err := os.Stat(KosDir); err == nil {
-  fmt.Println("KOS repository already initialized in this directory.")
+  fmt.Println("KOS repository already initialized.")
   return
  }
  if err := os.Mkdir(KosDir, 0755); err != nil {
@@ -109,10 +121,7 @@ func cmdInit() {
 
 func cmdIgnore(pattern string) {
  if _, err := os.Stat(IgnoreFile); os.IsNotExist(err) {
-  if err := os.WriteFile(IgnoreFile, []byte(""), 0644); err != nil {
-   fmt.Printf("Error creating %s: %v\n", IgnoreFile, err)
-   os.Exit(1)
-  }
+  os.WriteFile(IgnoreFile, []byte(""), 0644)
  }
  f, err := os.OpenFile(IgnoreFile, os.O_APPEND|os.O_WRONLY, 0644)
  if err != nil {
@@ -120,10 +129,7 @@ func cmdIgnore(pattern string) {
   os.Exit(1)
  }
  defer f.Close()
- if _, err := f.WriteString(pattern + "\n"); err != nil {
-  fmt.Printf("Error writing to %s: %v\n", IgnoreFile, err)
-  os.Exit(1)
- }
+ f.WriteString(pattern + "\n")
  fmt.Printf("Added '%s' to %s\n", pattern, IgnoreFile)
 }
 
@@ -146,7 +152,6 @@ func cmdSave(message string) {
   Files:     make(map[string]string),
  }
 
- // REFACTORED: Use the helper to get files and hashes
  currentFiles, err := getWorkingDirectoryFiles()
  if err != nil {
   fmt.Printf("Error scanning directory: %v\n", err)
@@ -154,47 +159,33 @@ func cmdSave(message string) {
  }
  snapshot.Files = currentFiles
 
- // Create the .tar.gz file
- file, err := os.Create(filepathTar)
- if err != nil {
-  fmt.Printf("Error creating snapshot file: %v\n", err)
-  os.Exit(1)
- }
- defer file.Close()
+ manifest.Snapshots = append(manifest.Snapshots, snapshot)
 
- gzw := gzip.NewWriter(file)
+ file, err := os.Create(filepathTar)
+  if err != nil {
+   fmt.Printf("Error creating snapshot file: %v\n", err)
+   os.Exit(1)
+  }
+  defer file.Close()
+ 
+  gzw := gzip.NewWriter(file)
   defer gzw.Close()
   tw := tar.NewWriter(gzw)
   defer tw.Close()
  
-  // Stream files into tar
   for path := range currentFiles {
-   f, err := os.Open(path)
-   if err != nil {
-    continue
-   }
-   defer f.Close()
- 
-   info, err := f.Stat()
-   if err != nil {
-    continue
-   }
- 
-   header, err := tar.FileInfoHeader(info, info.Name())
-   if err != nil {
-    continue
-   }
-   header.Name = path
- 
-   if err := tw.WriteHeader(header); err != nil {
-    continue
-   }
-   if _, err := io.Copy(tw, f); err != nil {
-    continue
-   }
+   addFileToTar(tw, path)
   }
  
-  manifest.Snapshots = append(manifest.Snapshots, snapshot)
+  manifestData, _ := json.MarshalIndent(manifest, "", "  ")
+  mHeader := &tar.Header{
+   Name: filepath.Join(KosDir, ManifestFile),
+   Mode: 0644,
+   Size: int64(len(manifestData)),
+  }
+  tw.WriteHeader(mHeader)
+  tw.Write(manifestData)
+ 
   if err := saveManifest(manifest); err != nil {
    fmt.Printf("Error saving manifest: %v\n", err)
    os.Exit(1)
@@ -251,12 +242,7 @@ func cmdSave(message string) {
    os.Exit(1)
   }
  
-  currentFiles, err := getWorkingDirectoryFiles()
-  if err != nil {
-   fmt.Printf("Error scanning directory: %v\n", err)
-   os.Exit(1)
-  }
- 
+  currentFiles, _ := getWorkingDirectoryFiles()
   var latestFiles map[string]string
   if len(manifest.Snapshots) > 0 {
    latestFiles = manifest.Snapshots[len(manifest.Snapshots)-1].Files
@@ -265,7 +251,6 @@ func cmdSave(message string) {
   }
  
   var added, modified, deleted []string
- 
   for path, currentHash := range currentFiles {
    prevHash, exists := latestFiles[path]
    if !exists {
@@ -274,7 +259,6 @@ func cmdSave(message string) {
     modified = append(modified, path)
    }
   }
- 
   for path := range latestFiles {
    if _, exists := currentFiles[path]; !exists {
     deleted = append(deleted, path)
@@ -286,7 +270,6 @@ func cmdSave(message string) {
    fmt.Println("\033[32mNothing to save. Working tree clean.\033[0m\n")
    return
   }
- 
   if len(added) > 0 {
    fmt.Printf("\033[32m+ Added (%d):\033[0m\n", len(added))
    for _, f := range added { fmt.Printf("  %s\n", f) }
@@ -319,10 +302,9 @@ func cmdSave(message string) {
    fmt.Printf("Error: One or both snapshot IDs not found.\n")
    os.Exit(1)
   }
- 
-  var added, deleted, modified []string
 
-  for path, hash2 := range snap2.Files {
+  var added, deleted, modified []string
+   for path, hash2 := range snap2.Files {
     hash1, exists := snap1.Files[path]
     if !exists {
      added = append(added, path)
@@ -330,7 +312,6 @@ func cmdSave(message string) {
      modified = append(modified, path)
     }
    }
-  
    for path := range snap1.Files {
     if _, exists := snap2.Files[path]; !exists {
      deleted = append(deleted, path)
@@ -342,7 +323,6 @@ func cmdSave(message string) {
     fmt.Println("\033[32mNo differences found.\033[0m\n")
     return
    }
-  
    if len(added) > 0 {
     fmt.Printf("\033[32m+ Added (%d):\033[0m\n", len(added))
     for _, f := range added { fmt.Printf("  %s\n", f) }
@@ -358,31 +338,74 @@ func cmdSave(message string) {
    fmt.Println()
   }
   
+  func cmdExport(id, destDir string) {
+   manifest, err := loadManifest()
+   if err != nil {
+    fmt.Printf("Error: Not a KOS repository.\n")
+    os.Exit(1)
+   }
+  
+   var targetSnap *Snapshot
+   for i := range manifest.Snapshots {
+    if manifest.Snapshots[i].ID == id { targetSnap = &manifest.Snapshots[i] }
+   }
+   if targetSnap == nil {
+    fmt.Printf("Error: Snapshot ID %s not found.\n", id)
+    os.Exit(1)
+   }
+  
+   tarPath := filepath.Join(KosDir, targetSnap.Filename)
+   fmt.Printf("Exporting snapshot %s to %s...\n", id, destDir)
+   
+   if err := os.MkdirAll(destDir, 0755); err != nil {
+    fmt.Printf("Error creating directory: %v\n", err)
+    os.Exit(1)
+   }
+  
+   if err := extractTarGz(tarPath, destDir); err != nil {
+    fmt.Printf("Error extracting: %v\n", err)
+    os.Exit(1)
+   }
+   fmt.Println("Export complete!")
+  }
+  
+  func cmdLoad(tarPath string) {
+   if _, err := os.Stat(tarPath); os.IsNotExist(err) {
+    fmt.Printf("Error: File %s not found.\n", tarPath)
+    os.Exit(1)
+   }
+  
+   if _, err := os.Stat(KosDir); os.IsNotExist(err) {
+    cmdInit()
+   }
+  
+   fmt.Printf("Loading portable snapshot from %s...\n", tarPath)
+   if err := extractTarGz(tarPath, "."); err != nil {
+    fmt.Printf("Error extracting: %v\n", err)
+    os.Exit(1)
+   }
+   fmt.Println("Load complete! History and files restored.")
+  }
+  
   // --- Helper Functions ---
   
   func saveManifest(m Manifest) error {
    data, err := json.MarshalIndent(m, "", "  ")
-   if err != nil {
-    return err
-   }
+   if err != nil { return err }
    return os.WriteFile(filepath.Join(KosDir, ManifestFile), data, 0644)
   }
   
   func loadManifest() (Manifest, error) {
    var m Manifest
    data, err := os.ReadFile(filepath.Join(KosDir, ManifestFile))
-   if err != nil {
-    return m, err
-   }
+   if err != nil { return m, err }
    err = json.Unmarshal(data, &m)
    return m, err
   }
   
   func loadIgnores() []string {
    data, err := os.ReadFile(IgnoreFile)
-   if err != nil {
-    return []string{}
-   }
+   if err != nil { return []string{} }
    lines := strings.Split(string(data), "\n")
    var ignores []string
    for _, line := range lines {
@@ -396,60 +419,90 @@ func cmdSave(message string) {
   
   func getFileHash(path string) (string, error) {
    f, err := os.Open(path)
-   if err != nil {
-    return "", err
-   }
+   if err != nil { return "", err }
    defer f.Close()
-  
    h := sha256.New()
-   if _, err := io.Copy(h, f); err != nil {
-    return "", err
-   }
+   if _, err := io.Copy(h, f); err != nil { return "", err }
    return fmt.Sprintf("%x", h.Sum(nil)), nil
   }
   
-  // REFACTORED HELPER: Walks directory, respects ignores, and hashes files.
-  // Used by both 'save' and 'status' to keep code DRY (Don't Repeat Yourself).
   func getWorkingDirectoryFiles() (map[string]string, error) {
    files := make(map[string]string)
    ignores := loadIgnores()
   
    err := filepath.WalkDir(".", func(path string, d os.DirEntry, err error) error {
-    if err != nil {
-     return err
-    }
-  
+    if err != nil { return err }
     if path == KosDir || path == IgnoreFile {
-     if d.IsDir() {
-      return filepath.SkipDir
-     }
+     if d.IsDir() { return filepath.SkipDir }
      return nil
     }
-  
     for _, pattern := range ignores {
-     if pattern == "" {
-      continue
-     }
+     if pattern == "" { continue }
      match, _ := filepath.Match(pattern, filepath.Base(path))
      if match {
-      if d.IsDir() {
-       return filepath.SkipDir
-      }
+      if d.IsDir() { return filepath.SkipDir }
       return nil
      }
     }
-  
-    if d.IsDir() {
-     return nil
-    }
-  
+    if d.IsDir() { return nil }
     hash, err := getFileHash(path)
-    if err != nil {
-     return nil
-    }
+    if err != nil { return nil }
     files[path] = hash
     return nil
    })
-  
    return files, err
+  }
+
+  func addFileToTar(tw *tar.Writer, path string) {
+   f, err := os.Open(path)
+   if err != nil { return }
+   defer f.Close()
+  
+   info, err := f.Stat()
+   if err != nil { return }
+  
+   header, err := tar.FileInfoHeader(info, info.Name())
+   if err != nil { return }
+   header.Name = path
+  
+   if err := tw.WriteHeader(header); err != nil { return }
+   io.Copy(tw, f)
+  }
+  
+  func extractTarGz(tarPath, destDir string) error {
+   file, err := os.Open(tarPath)
+   if err != nil { return err }
+   defer file.Close()
+  
+   gzr, err := gzip.NewReader(file)
+   if err != nil { return err }
+   defer gzr.Close()
+  
+   tr := tar.NewReader(gzr)
+  
+   for {
+    header, err := tr.Next()
+    if err == io.EOF { break }
+    if err != nil { return err }
+  
+    target := filepath.Join(destDir, header.Name)
+    
+    cleanTarget := filepath.Clean(target)
+    cleanDest := filepath.Clean(destDir)
+    if !strings.HasPrefix(cleanTarget, cleanDest+string(os.PathSeparator)) && cleanTarget != cleanDest {
+     return fmt.Errorf("illegal file path: %s", header.Name)
+    }
+  
+    switch header.Typeflag {
+    case tar.TypeDir:
+     os.MkdirAll(target, 0755)
+    case tar.TypeReg:
+     os.MkdirAll(filepath.Dir(target), 0755)
+     f, err := os.OpenFile(target, os.O_CREATE|os.O_RDWR, os.FileMode(header.Mode))
+     if err != nil { continue }
+     io.Copy(f, tr)
+     f.Close()
+    }
+   }
+   return nil
   }

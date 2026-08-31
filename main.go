@@ -1215,19 +1215,3 @@ func extractFileFromTar(tarPath, fileName string) (string, error) {
 	}
 	return "", fmt.Errorf("file not found in archive")
 }
-if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return "", err
-		}
-		if header.Name == fileName && header.Typeflag == tar.TypeReg {
-			var buf bytes.Buffer
-		    if _, err := io.Copy(&buf, tr); err != nil {
-				return "", err
-			}
-			return buf.String(), nil
-		}
-	}
-	return "", fmt.Errorf("file not found in archive")
-}

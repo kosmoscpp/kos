@@ -1249,6 +1249,12 @@ func getWorkingDirectoryFiles() (map[string]string, error) {
 		if path == "." {
 			return nil
 		}
+		if strings.HasPrefix(path, ".kos") {
+		   if d.IsDir() {
+		    return filepath.SkipDir
+		   }
+		   return nil
+		  }
 		absPath, _ := filepath.Abs(path)
 		if strings.HasPrefix(absPath, kosDir) {
 			if d.IsDir() {

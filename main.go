@@ -237,21 +237,20 @@ func cmdInit() {
  // Generate UUID for this project
  projectUUID := generateUUID()
 
- home, _ := os.UserHomeDir()
- kosDir := filepath.Join(home, GlobalKosBase, projectUUID)
-
- if err := os.MkdirAll(kosDir, 0755); err != nil {
-  fmt.Printf("Error creating %s: %v\n", kosDir, err)
-  os.Exit(1)
- }
-
  // Store UUID in .kos-project FIRST (so getKosDir() works)
  if err := os.WriteFile(".kos-project", []byte(projectUUID), 0644); err != nil {
   fmt.Printf("Error creating .kos-project: %v\n", err)
   os.Exit(1)
  }
 
- // Now create the manifest
+ // NOW get the directory path (it will use the UUID)
+ kosDir := getKosDir()
+
+ if err := os.MkdirAll(kosDir, 0755); err != nil {
+  fmt.Printf("Error creating %s: %v\n", kosDir, err)
+  os.Exit(1)
+ }
+
  manifest := Manifest{Snapshots: []Snapshot{}}
  if err := saveManifest(manifest); err != nil {
   fmt.Printf("Error creating manifest: %v\n", err)

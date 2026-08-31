@@ -5,3 +5,6 @@ kos
 *.exe
 home/
 *.json
+.kos/
+.kos-project
+.kosignore

@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -21,22 +22,60 @@ const (
 )
 
 func getKosDir() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		home = "."
-	}
-	if data, err := os.ReadFile(".kos-project"); err == nil {
-		projectName := strings.TrimSpace(string(data))
-		if projectName != "" {
-			return filepath.Join(home, GlobalKosBase, projectName)
-		}
-	}
-	cwd, _ := os.Getwd()
-	projectName := filepath.Base(cwd)
-	if projectName == "/" || projectName == "" {
-		projectName = "root_project"
-	}
-	return filepath.Join(home, GlobalKosBase, projectName)
+ home, err := os.UserHomeDir()
+ if err != nil {
+  home = "."
+ }
+ 
+ // Check if .kos-project exists and contains a UUID
+ if data, err := os.ReadFile(".kos-project"); err == nil {
+  projectUUID := strings.TrimSpace(string(data))
+  if projectUUID != "" && len(projectUUID) > 20 { // UUIDs are long
+   return filepath.Join(home, GlobalKosBase, projectUUID)
+  }
+ }
+ 
+ // Fallback for old projects (backward compatibility)
+ if data, err := os.ReadFile(".kos-project"); err == nil {
+  projectName := strings.TrimSpace(string(data))
+  if projectName != "" {
+   return filepath.Join(home, GlobalKosBase, projectName)
+  }
+ }
+ 
+ cwd, _ := os.Getwd()
+ projectName := filepath.Base(cwd)
+ if projectName == "/" || projectName == "" {
+  projectName = "root_project"
+ }
+ return filepath.Join(home, GlobalKosBase, projectName)
+}
+
+func generateUUID() string {
+ b := make([]byte, 16)
+ rand.Read(b)
+ return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
+}
+
+func updateProjectsIndex(uuid, projectName string) {
+ home, _ := os.UserHomeDir()
+ indexPath := filepath.Join(home, GlobalKosBase, "projects.json")
+ 
+ var index map[string]string
+ 
+ // Load existing index
+ if data, err := os.ReadFile(indexPath); err == nil {
+  json.Unmarshal(data, &index)
+ } else {
+  index = make(map[string]string)
+ }
+ 
+ // Add or update entry
+ index[uuid] = projectName
+ 
+ // Save index
+ data, _ := json.MarshalIndent(index, "", "  ")
+ os.WriteFile(indexPath, data, 0644)
 }
 
 type Snapshot struct {
@@ -170,24 +209,41 @@ func printUsage() {
 }
 
 func cmdInit() {
-	kosDir := getKosDir()
-	if _, err := os.Stat(filepath.Join(kosDir, ManifestFile)); err == nil {
-		fmt.Println("KOS repository already initialized.")
-		return
-	}
-	if err := os.MkdirAll(kosDir, 0755); err != nil {
-		fmt.Printf("Error creating %s: %v\n", kosDir, err)
-		os.Exit(1)
-	}
-	manifest := Manifest{Snapshots: []Snapshot{}}
-	if err := saveManifest(manifest); err != nil {
-		fmt.Printf("Error creating manifest: %v\n", err)
-		os.Exit(1)
-	}
-	if _, err := os.Stat(IgnoreFile); os.IsNotExist(err) {
-		os.WriteFile(IgnoreFile, []byte(""), 0644)
-	}
-	fmt.Printf("Initialized empty KOS repository in %s\n", kosDir)
+ kosDir := getKosDir()
+ if _, err := os.Stat(kosDir); err == nil {
+  fmt.Println("KOS repository already initialized.")
+  return
+ }
+ 
+ // Generate UUID for this project
+ projectUUID := generateUUID()
+ 
+ if err := os.MkdirAll(kosDir, 0755); err != nil {
+  fmt.Printf("Error creating %s: %v\n", kosDir, err)
+  os.Exit(1)
+ }
+ 
+ manifest := Manifest{Snapshots: []Snapshot{}}
+ if err := saveManifest(manifest); err != nil {
+  fmt.Printf("Error creating manifest: %v\n", err)
+  os.Exit(1)
+ }
+ 
+ if err := os.WriteFile(IgnoreFile, []byte(""), 0644); err != nil {
+  fmt.Printf("Error creating %s: %v\n", IgnoreFile, err)
+  os.Exit(1)
+ }
+ 
+ // Store UUID in .kos-project
+ if err := os.WriteFile(".kos-project", []byte(projectUUID), 0644); err != nil {
+  fmt.Printf("Error creating .kos-project: %v\n", err)
+  os.Exit(1)
+ }
+ 
+ // Add to projects.json index
+ updateProjectsIndex(projectUUID, filepath.Base(kosDir))
+ 
+ fmt.Printf("Initialized empty KOS repository in %s\n", kosDir)
 }
 
 func cmdIgnore(pattern string) {
@@ -674,46 +730,55 @@ func cmdQuickSave() {
 }
 
 func cmdProjects() {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		fmt.Printf("Error: Cannot determine home directory\n")
-		os.Exit(1)
-	}
-	globalDir := filepath.Join(home, GlobalKosBase)
-	entries, err := os.ReadDir(globalDir)
-	if err != nil {
-		fmt.Printf("Error: Cannot read global directory\n")
-		os.Exit(1)
-	}
-	fmt.Println("\n\033[1;36m📦 KOS PROJECTS\033[0m\n")
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		projectName := entry.Name()
-		manifestPath := filepath.Join(globalDir, projectName, ManifestFile)
-		var m Manifest
-		data, err := os.ReadFile(manifestPath)
-		if err != nil {
-			continue
-		}
-		json.Unmarshal(data, &m)
-		var totalSize int64
-		snapDir := filepath.Join(globalDir, projectName)
-		snapEntries, _ := os.ReadDir(snapDir)
-		for _, snapEntry := range snapEntries {
-			if strings.HasPrefix(snapEntry.Name(), "snap_") && strings.HasSuffix(snapEntry.Name(), ".tar.gz") {
-				info, _ := snapEntry.Info()
-				if info != nil {
-					totalSize += info.Size()
-				}
-			}
-		}
-		commitCount := len(m.Snapshots)
-		sizeStr := formatBytes(totalSize)
-		fmt.Printf("  \033[1;33m%-20s\033[0m \033[2;37m%d commits, %s\033[0m\n", projectName, commitCount, sizeStr)
-	}
-	fmt.Println()
+ home, err := os.UserHomeDir()
+ if err != nil {
+  fmt.Printf("Error: Cannot determine home directory\n")
+  os.Exit(1)
+ }
+ 
+ globalDir := filepath.Join(home, GlobalKosBase)
+ indexPath := filepath.Join(globalDir, "projects.json")
+ 
+ // Load projects index
+ var index map[string]string
+ if data, err := os.ReadFile(indexPath); err == nil {
+  json.Unmarshal(data, &index)
+ } else {
+  index = make(map[string]string)
+ }
+ 
+ fmt.Println("\n\033[1;36m📦 KOS PROJECTS\033[0m\n")
+ 
+ // Iterate through UUIDs in index
+ for uuid, projectName := range index {
+  projectDir := filepath.Join(globalDir, uuid)
+  manifestPath := filepath.Join(projectDir, ManifestFile)
+  
+  var m Manifest
+  data, err := os.ReadFile(manifestPath)
+  if err != nil {
+   continue
+  }
+  json.Unmarshal(data, &m)
+  
+  var totalSize int64
+  snapEntries, _ := os.ReadDir(projectDir)
+  for _, snapEntry := range snapEntries {
+   if strings.HasPrefix(snapEntry.Name(), "snap_") && strings.HasSuffix(snapEntry.Name(), ".tar.gz") {
+    info, _ := snapEntry.Info()
+    if info != nil {
+     totalSize += info.Size()
+    }
+   }
+  }
+  
+  commitCount := len(m.Snapshots)
+  sizeStr := formatBytes(totalSize)
+  
+  fmt.Printf("  \033[1;33m%-20s\033[0m \033[2;37m%d commits, %s\033[0m\n", projectName, commitCount, sizeStr)
+ }
+ 
+ fmt.Println()
 }
 
 func cmdRename(newName string) {

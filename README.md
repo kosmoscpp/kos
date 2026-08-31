@@ -1,116 +1,136 @@
-# KOS - Zero-Dependency Portable Version Control
+# KOS - Portable, Encrypted Version Control
 
-A lightweight, offline-first, encrypted version control system built for disconnected environments.
+A zero-dependency version control system built for portability, encryption, and simplicity.
 
-## 🚀 The Problem
+KOS isn't trying to replace Git. It's a different tool for different needs:
+- Portable - Single binary, works from USB drives, no installation required
+- Encrypted - Built-in AES-256-CFB encryption with HMAC integrity verification
+- Shareable - Export snapshots as tiny encrypted files (400 bytes), share via email/USB/cloud
+- Simple - No staging area, no complex branching, just save and restore
+- Global Store - Work on projects from any directory, UUID-based collision prevention
+- Zero Dependencies - 100% Go standard library, compiles anywhere
 
-Git is amazing, but it requires:
-- Internet access (for remote repos)
-- Complex setup (SSH keys, GitHub accounts)
-- Server infrastructure
+## 🚀 Why KOS?
 
-What if you're on a plane? Working on a USB drive? In a remote area with no internet?
+Git is powerful, but sometimes you need:
+- A VCS that fits on a USB stick
+- Encrypted snapshots you can share securely
+- A tool that works without any setup or configuration
+- Simple mental model: save → view → restore
+- Portability across machines without complex sync
 
-## 💡 The Solution: KOS
-
-KOS gives you full version control with:
-- Zero dependencies - Single binary, no installation
-- Portable snapshots - Every save is a self-contained .tar.gz file
-- Built-in encryption - AES-128-CFB + HMAC-SHA256
-- Global project store - Work from any folder, any device
-- Collision-proof UUIDs - Never lose work to folder conflicts
+KOS gives you all of that in a single binary.
 
 ## 📦 Installation
 
 ### Linux/Mac
-```
-git clone <this-repo>
+git clone <your-repo>
 cd kos
 make install
-```
-
 ### Windows
-```
-git clone <this-repo>
+git clone <your-repo>
 cd kos
 build.bat
-```
 After installation, run kos from anywhere!
 
 ### Uninstall
 make uninstall  # Linux/Mac
-### Manual Installation
-If you prefer not to use make:
-go build -o kos main.go
-sudo cp kos /usr/local/bin/
-
 ## 🎯 Quick Start
 
-# Initialize
+# Initialize a project
 kos init
 
-# Save with message
+# Create a snapshot
 kos save "Initial commit"
 
 # View timeline
 kos view
 
-# Encrypt and share
+# Tag a release
+kos tag v1.0
+
+# Export as portable file
+kos share v1.0
+## 🔐 Encryption
+
+Share encrypted projects via USB, email, or cloud storage:
+
+# Save with encryption
 kos save --encrypt "Secret commit"
+# Enter password when prompted (masked input)
+
+# Export encrypted snapshot
 kos share HEAD
-## 🔐 Encryption Demo
+# Creates: snap_abc123.tar.gz.enc (400 bytes)
 
-# Save encrypted snapshot
-kos save --encrypt "Top secret"
-Password: ******
-Confirm password: ******
-🔐 Saved encrypted snapshot abc12345: Top secret (3 files)
-
-# Export
-kos share HEAD
-✅ Snapshot exported: snap_abc12345.tar.gz.enc (400 bytes)
-
-# Load on another machine
-kos load snap_abc12345.tar.gz.enc
-Password: ******
-✅ Decryption successful!
-That 400-byte file contains your entire encrypted project. Email it, put it on a USB, share it anywhere.
+# Load encrypted file
+kos load snap_abc123.tar.gz.enc
+# Enter password to decrypt
+File format: [KENC][version][IV][encrypted data][HMAC]
+- AES-256-CFB stream cipher (zero RAM spike, works on 2GB+ files)
+- HMAC-SHA256 integrity verification (fail-fast on wrong password)
+- Password verification before extraction
 
 ## 🛠️ Commands
 
 | Command | Description |
 |---------|-------------|
-| init | Initialize repository |
+| init | Initialize KOS repository |
 | save <msg> | Create snapshot |
-| save --encrypt <msg> | Encrypted snapshot |
-| view | Timeline with relative timestamps |
+| save --encrypt <msg> | Create encrypted snapshot |
+| view | View timeline with relative timestamps |
 | status | Show modified files |
-| checkout <ref> [file] | Restore snapshot or file |
-| diff <id1> <id2> | Compare snapshots |
-| tag <name> | Tag a snapshot |
-| share <id> | Export portable file |
-| load <file> | Load from file or global store |
-| projects | List all projects |
+| checkout <ref> [file] | Restore snapshot or single file |
+| diff <id1> <id2> [file] | Compare snapshots |
+| tag <name> [id] | Tag a snapshot |
+| share <id> | Export as portable .tar.gz |
+| load <file/project> | Load from file or global store |
+| projects | List all projects in global store |
+| ignore <pattern> | Add to .kosignore |
+| search <keyword> | Search commit messages |
+| stats | Project statistics |
+| ks | Quick save with timestamp |
 
 ## 🏗️ Architecture
 Project Folder/
-├── .kos-project          # UUID reference
+├── .kos-project          # Project UUID reference
 ├── .kosignore           # Ignore patterns
 └── [your files]
 Global Store (~/.kos-global/):
 ├── /
 │   ├── manifest.json    # Snapshot metadata
-│   └── snap_*.tar.gz    # Compressed snapshots
+│   ├── snap_*.tar.gz    # Compressed snapshots
+│   └── .kosignore
+├── /
 └── projects.json        # UUID → name index
+
+Key features:
+- UUID-based projects - No folder name conflicts, no ghost projects
+- Embedded manifests - Every snapshot is self-contained
+- Streaming encryption - O(1) memory usage, works on large files
+- **Smart .kosignore** - O(1) directory skippinHEAD navigationon** - HEAD, HEAD~1, tags work everywhere
 
 ## 🎓 Built For
 
 - Students working on USB drives
-- Developers in offline environments
-- Quick prototyping without cloud setup
-- Secure project sharing
+- Developers who need encrypted snapshots
+- Quick prototyping without complex setup
+- Secure project sharing via email/USB
 - Learning version control concepts
+- Air-gapped environments
+
+## 📊 Technical DetailsSingle file:e:** Entire project is main.go (~2000 linesZero dependencies:s:** 100% Go standard librarReproducible builds:s:** Byte-identical output with deterministic flagCross-platform:m:** Works on Linux, Mac, WindowEncryption:n:** AES-256-CFB + HMAC-SHA256 (stdlib cryptoPassword masking:g:** Pure syscall implementation (no golang.org/x/term)
+
+See [STDLIB.md](STDLIB.md) for the complete list of stdlib-for-package substitutions.
+
+## 🏆 Bonuses Achieved
+
+Single File (+5)5)** - Entire project in one main.go file
+Reproducible Build (+5)5)** - Byte-identical output, see [REPRODUCIBLE.md](REPRODUCIBLE.md)
+STDLIB Log (+3)3)** - 10 real substitutions in [STDLIB.md](STDLIB.md)
 
 ## 📄 License
 
-MIT License - Built with ❤️  for Hackathon 2026
+MIT License - Built for Hackathon 2026
+
+-KOS: Portable, encrypted version control that **just works**

@@ -347,7 +347,7 @@ func cmdView() {
  }
  fmt.Println("\033[1;36m")
  fmt.Println("╔══════════════════════════════════════════════════════════╗")
- fmt.Println("║                     KOS TIMELINE                         ║")
+ fmt.Println("║                     KOS_TIMELINE                         ║")
  fmt.Println("╚══════════════════════════════════════════════════════════╝")
  fmt.Println("\033[0m")
  if len(manifest.Snapshots) == 0 {
@@ -356,8 +356,11 @@ func cmdView() {
  }
  for i := len(manifest.Snapshots) - 1; i >= 0; i-- {
   snap := manifest.Snapshots[i]
+  
+  // Get both exact time and relative time
   t := time.Unix(snap.Timestamp, 0)
   timeStr := t.Format("Jan 02, 15:04")
+  timeStr2 := formatRelativeTime(snap.Timestamp)
   
   // Build tag display string
   tagStr := ""
@@ -365,8 +368,12 @@ func cmdView() {
    tagStr = fmt.Sprintf(" \033[1;32m[%s]\033[0m", snap.Tag)
   }
   
-  fmt.Printf("  \033[36m●\033[0m \033[1;33m%-8s\033[0m ┃ \033[2;37m%s\033[0m ┃ \033[1;37m%s\033[0m%s\n", snap.ID, timeStr, snap.Message, tagStr)
+  // Notice the added (%s) to hold the relative time, and the 5th %s for tagStr
+  fmt.Printf("  \033[36m●\033[0m \033[1;33m%-8s\033[0m ┃ \033[2;37m%s\033[0m (\033[2;37m%s\033[0m) ┃ \033[1;37m%s\033[0m%s\n", 
+   snap.ID, timeStr, timeStr2, snap.Message, tagStr)
+   
   fmt.Printf("  \033[36m│\033[0m           ┃  %d files\n", len(snap.Files))
+  
   if i == 0 {
    fmt.Printf("  \033[36m└──\033[0m (End of history)\n\n")
   } else {
@@ -749,6 +756,37 @@ func formatBytes(bytes int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
+}
+
+func formatRelativeTime(timestamp int64) string {
+ now := time.Now().Unix()
+ diff := now - timestamp
+ 
+ if diff < 60 {
+  return "just now"
+ } else if diff < 3600 {
+  mins := diff / 60
+  if mins == 1 {
+   return "1 minute ago"
+  }
+  return fmt.Sprintf("%d minutes ago", mins)
+ } else if diff < 86400 {
+  hours := diff / 3600
+  if hours == 1 {
+   return "1 hour ago"
+  }
+  return fmt.Sprintf("%d hours ago", hours)
+ } else if diff < 2592000 {
+  days := diff / 86400
+  if days == 1 {
+   return "1 day ago"
+  }
+  return fmt.Sprintf("%d days ago", days)
+ } else {
+  // Fall back to date format for older commits
+  t := time.Unix(timestamp, 0)
+  return t.Format("Jan 02, 15:04")
+ }
 }
 
 func cmdQuickSave() {

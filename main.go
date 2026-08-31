@@ -139,7 +139,7 @@ func main() {
 	  fmt.Println("Error: missing snapshot ID or tag. Usage: kos checkout <id-or-tag>")
 	  os.Exit(1)
 	 }
-	 cmdCheckout(os.Args[2])
+	 cmdCheckout(os.Args[2:]...)
 	default:
 		fmt.Printf("Unknown command: %s\n", command)
 		printUsage()
@@ -414,39 +414,39 @@ func resolveRef(ref string) *Snapshot {
  return nil
 }
 
-func cmdCheckout(target string) {
- manifest, err := loadManifest()
- if err != nil {
-  fmt.Printf("Error: Not a KOS repository. Run 'kos init'.\n")
+func cmdCheckout(args ...string) {
+ if len(args) == 0 {
+  fmt.Println("Error: missing reference. Usage: kos checkout <id-or-tag> [filename]")
   os.Exit(1)
  }
 
- if len(manifest.Snapshots) == 0 {
-  fmt.Println("Error: No snapshots to checkout.")
+ ref := args[0]
+ var filename string
+ if len(args) > 1 {
+  filename = args[1]
+ }
+
+ snap := resolveRef(ref)
+ if snap == nil {
+  fmt.Printf("Error: Snapshot '%s' not found (by ID or tag)\n", ref)
   os.Exit(1)
  }
 
- // Find the snapshot by ID or tag
- var targetSnap *Snapshot
- for i := range manifest.Snapshots {
-  if manifest.Snapshots[i].ID == target || manifest.Snapshots[i].Tag == target {
-   targetSnap = &manifest.Snapshots[i]
-   break
-  }
- }
-
- if targetSnap == nil {
-  fmt.Printf("Error: Snapshot '%s' not found (by ID or tag)\n", target)
-  os.Exit(1)
- }
-
- // Show what we're checking out
+ // Show warning
  fmt.Printf("\n\033[1;33m⚠️  CHECKOUT WARNING\033[0m\n")
- fmt.Printf("This will overwrite your current directory with snapshot \033[1;36m%s\033[0m\n", targetSnap.ID)
- if targetSnap.Tag != "" {
-  fmt.Printf("Tag: \033[1;32m[%s]\033[0m\n", targetSnap.Tag)
+ fmt.Printf("This will restore snapshot \033[1;36m%s\033[0m", snap.ID)
+ if snap.Tag != "" {
+  fmt.Printf(" \033[1;32m[%s]\033[0m", snap.Tag)
  }
- fmt.Printf("Message: \033[2;37m%s\033[0m\n", targetSnap.Message)
+ fmt.Println()
+ 
+ if filename != "" {
+  fmt.Printf("Target: Single file \033[1;37m%s\033[0m\n", filename)
+ } else {
+  fmt.Printf("Target: \033[1;37mEntire working directory\033[0m\n")
+ }
+ 
+ fmt.Printf("Message: \033[2;37m%s\033[0m\n", snap.Message)
  fmt.Printf("\n\033[33mAre you sure? This will overwrite current files. (y/N): \033[0m")
 
  var response string
@@ -457,18 +457,32 @@ func cmdCheckout(target string) {
   return
  }
 
- // Extract the snapshot to current directory
- tarPath := filepath.Join(getKosDir(), targetSnap.Filename)
- if err := extractTarGz(tarPath, "."); err != nil {
-  fmt.Printf("Error: Failed to extract snapshot: %v\n", err)
-  os.Exit(1)
- }
+ tarPath := filepath.Join(getKosDir(), snap.Filename)
 
- fmt.Printf("\n\033[1;32m✅ Checked out snapshot %s\033[0m\n", targetSnap.ID)
- if targetSnap.Tag != "" {
-  fmt.Printf("   Tag: \033[1;32m[%s]\033[0m\n", targetSnap.Tag)
+ if filename != "" {
+  // Single file checkout
+  content, err := extractFileFromTar(tarPath, filename)
+  if err != nil {
+   fmt.Printf("\n\033[31mError: File '%s' not found in snapshot %s\033[0m\n", filename, snap.ID)
+   os.Exit(1)
+  }
+  
+  // Ensure directory exists
+  os.MkdirAll(filepath.Dir(filename), 0755)
+  if err := os.WriteFile(filename, []byte(content), 0644); err != nil {
+   fmt.Printf("\n\033[31mError writing file: %v\033[0m\n", err)
+   os.Exit(1)
+  }
+  fmt.Printf("\n\033[1;32m✅ Restored '%s' from snapshot %s\033[0m\n\n", filename, snap.ID)
+ } else {
+  // Full directory checkout
+  if err := extractTarGz(tarPath, "."); err != nil {
+   fmt.Printf("Error: Failed to extract snapshot: %v\n", err)
+   os.Exit(1)
+  }
+  fmt.Printf("\n\033[1;32m✅ Checked out snapshot %s\033[0m\n", snap.ID)
+  fmt.Printf("\033[2;37mYour working directory now matches this snapshot.\033[0m\n\n")
  }
- fmt.Printf("\033[2;37mYour working directory now matches this snapshot.\033[0m\n\n")
 }
 
 func cmdLoad(args ...string) {
@@ -1194,6 +1208,22 @@ func extractFileFromTar(tarPath, fileName string) (string, error) {
 		if header.Name == fileName && header.Typeflag == tar.TypeReg {
 			var buf bytes.Buffer
 			if _, err := io.Copy(&buf, tr); err != nil {
+				return "", err
+			}
+			return buf.String(), nil
+		}
+	}
+	return "", fmt.Errorf("file not found in archive")
+}
+if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return "", err
+		}
+		if header.Name == fileName && header.Typeflag == tar.TypeReg {
+			var buf bytes.Buffer
+		    if _, err := io.Copy(&buf, tr); err != nil {
 				return "", err
 			}
 			return buf.String(), nil

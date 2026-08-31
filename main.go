@@ -15,7 +15,9 @@ import (
  "os"
  "path/filepath"
  "strings"
+ "syscall"
  "time"
+ "unsafe"
 )
 
 const (
@@ -144,18 +146,81 @@ func decryptFile(srcPath, dstPath, password string) error {
 
 func promptPassword(confirm bool) string {
  fmt.Print("Password: ")
- var password string
- fmt.Scanln(&password)
+ password := readPassword()
+ fmt.Println()
+ 
  if confirm {
   fmt.Print("Confirm password: ")
-  var confirm string
-  fmt.Scanln(&confirm)
+  confirm := readPassword()
+  fmt.Println()
   if password != confirm {
    fmt.Println("Passwords do not match.")
    os.Exit(1)
   }
  }
  return password
+}
+
+func readPassword() string {
+ // Get current terminal state
+ fd := int(os.Stdin.Fd())
+ oldState, err := getTerminalState(fd)
+ if err != nil {
+  // Fallback: just read normally if we can't control terminal
+  var password string
+  fmt.Scanln(&password)
+  return password
+ }
+ 
+ // Disable echo
+ newState := oldState
+ newState.Lflag &^= syscall.ECHO
+ if err := setTerminalState(fd, newState); err != nil {
+  var password string
+  fmt.Scanln(&password)
+  return password
+ }
+ defer setTerminalState(fd, oldState)
+ 
+ // Read password character by character
+ var password []byte
+ buf := make([]byte, 1)
+ for {
+  n, err := os.Stdin.Read(buf)
+  if err != nil || n == 0 {
+   break
+  }
+  if buf[0] == '\n' || buf[0] == '\r' {
+   break
+  }
+  if buf[0] == 127 || buf[0] == 8 { // Backspace
+   if len(password) > 0 {
+    password = password[:len(password)-1]
+    fmt.Print("\b \b")
+   }
+  } else {
+   password = append(password, buf[0])
+   fmt.Print("*")
+  }
+ }
+ return string(password)
+}
+
+func getTerminalState(fd int) (syscall.Termios, error) {
+ var state syscall.Termios
+ _, _, errno := syscall.Syscall6(syscall.SYS_IOCTL, uintptr(fd), uintptr(syscall.TCGETS), uintptr(unsafe.Pointer(&state)), 0, 0, 0)
+ if errno != 0 {
+  return state, errno
+ }
+ return state, nil
+}
+
+func setTerminalState(fd int, state syscall.Termios) error {
+ _, _, errno := syscall.Syscall6(syscall.SYS_IOCTL, uintptr(fd), uintptr(syscall.TCSETS), uintptr(unsafe.Pointer(&state)), 0, 0, 0)
+ if errno != 0 {
+  return errno
+ }
+ return nil
 }
 
 func getKosDir() string {

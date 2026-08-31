@@ -20,6 +20,30 @@ KOS gives you full version control with:
 - Global project store - Work from any folder, any device
 - Collision-proof UUIDs - Never lose work to folder conflicts
 
+## 📦 Installation
+
+### Linux/Mac
+```
+git clone <this-repo>
+cd kos
+make install
+```
+
+### Windows
+```
+git clone <this-repo>
+cd kos
+build.bat
+```
+After installation, run kos from anywhere!
+
+### Uninstall
+make uninstall  # Linux/Mac
+### Manual Installation
+If you prefer not to use make:
+go build -o kos main.go
+sudo cp kos /usr/local/bin/
+
 ## 🎯 Quick Start
 
 # Initialize

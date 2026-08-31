@@ -1,23 +1,26 @@
+# KOS - Zero-Dependency Version Control
+# Build and install with: make install
+
 BINARY_NAME=kos
 INSTALL_DIR=/usr/local/bin
 
+.PHONY: build install uninstall clean
+
 # Build the binary
 build:
- CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o $(BINARY_NAME) main.go
+ GOOS=linux GOARCH=amd64 go build -trimpath -buildvcs=false -ldflags="-s -w" -o $(BINARY_NAME) main.go
 
 # Install to system PATH (requires sudo)
 install: build
- @echo "Installing $(BINARY_NAME) to $(INSTALL_DIR)..."
  sudo cp $(BINARY_NAME) $(INSTALL_DIR)/
- @echo "✓ Installed! You can now use '$(BINARY_NAME)' from anywhere."
+ @echo "✅ KOS installed to $(INSTALL_DIR)/$(BINARY_NAME)"
+ @echo "Run 'kos' from anywhere!"
 
-# Uninstall
+# Uninstall from system
 uninstall:
  sudo rm -f $(INSTALL_DIR)/$(BINARY_NAME)
- @echo "✓ Uninstalled."
+ @echo "✅ KOS uninstalled"
 
 # Clean build artifacts
 clean:
  rm -f $(BINARY_NAME)
-
-.PHONY: build install uninstall clean

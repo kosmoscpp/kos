@@ -848,12 +848,41 @@ func loadProjectByUUID(uuid string, info ProjectInfo) {
 		os.Exit(1)
 	}
 	tarPath := filepath.Join(globalProjectDir, targetSnap.Filename)
-	fmt.Printf("Loading project '%s' into current directory...\n", info.Name)
-	fmt.Printf("   Restoring from: %s (ID: %s)\n", targetSnap.Filename, targetSnap.ID)
-	if err := extractTarGz(tarPath, "."); err != nil {
-		fmt.Printf("Error extracting: %v\n", err)
-		os.Exit(1)
-	}
+	  fmt.Printf("Loading project '%s' into current directory...\n", info.Name)
+	  fmt.Printf("   Restoring from: %s (ID: %s)\n", targetSnap.Filename, targetSnap.ID)
+	  
+	  var extractPath string
+	  var tempDir string
+	  if strings.HasSuffix(targetSnap.Filename, ".enc") {
+	    fmt.Printf("\n\033[1;36m🔐 Encrypted snapshot detected\033[0m\n")
+	    password := promptPassword(false)
+	    tempDir, err = os.MkdirTemp("", "kos-decrypt-*")
+	    if err != nil {
+	      fmt.Printf("Error: Cannot create temp directory: %v\n", err)
+	      os.Exit(1)
+	    }
+	    decryptedPath := filepath.Join(tempDir, "decrypted.tar.gz")
+	    if err := decryptFile(tarPath, decryptedPath, password); err != nil {
+	      fmt.Printf("\033[31mError: %v\033[0m\n", err)
+	      os.RemoveAll(tempDir)
+	      os.Exit(1)
+	    }
+	    fmt.Printf("\033[32m✅ Decryption successful!\033[0m\n\n")
+	    extractPath = decryptedPath
+	  } else {
+	    extractPath = tarPath
+	  }
+	  
+	  if err := extractTarGz(extractPath, "."); err != nil {
+	    fmt.Printf("Error extracting: %v\n", err)
+	    if tempDir != "" {
+	      os.RemoveAll(tempDir)
+	    }
+	    os.Exit(1)
+	  }
+	  if tempDir != "" {
+	    os.RemoveAll(tempDir)
+	  }
 	ignorePath := filepath.Join(globalProjectDir, IgnoreFile)
 	if _, err := os.Stat(ignorePath); err == nil {
 		ignoreData, _ := os.ReadFile(ignorePath)

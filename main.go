@@ -21,93 +21,88 @@ const (
 	GlobalKosBase = ".kos-global"
 )
 
-func getKosDir() string {
- home, err := os.UserHomeDir()
- if err != nil {
-  home = "."
- }
- 
- if data, err := os.ReadFile(".kos-project"); err == nil {
-  projectRef := strings.TrimSpace(string(data))
-  if projectRef != "" {
-   // If it's a UUID (correct format), use it directly
-   if isUUID(projectRef) {
-    return filepath.Join(home, GlobalKosBase, projectRef)
-   }
-   // Otherwise, it's a project name (backward compatibility)
-   return filepath.Join(home, GlobalKosBase, projectRef)
-  }
- }
- 
- cwd, _ := os.Getwd()
- projectName := filepath.Base(cwd)
- if projectName == "/" || projectName == "" {
-  projectName = "root_project"
- }
- return filepath.Join(home, GlobalKosBase, projectName)
+func isUUID(s string) bool {
+	if len(s) != 36 {
+		return false
+	}
+	if s[8] != '-' || s[13] != '-' || s[18] != '-' || s[23] != '-' {
+		return false
+	}
+	for i := 0; i < 36; i++ {
+		if i == 8 || i == 13 || i == 18 || i == 23 {
+			continue
+		}
+		c := s[i]
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return false
+		}
+	}
+	return true
 }
-
 
 func generateUUID() string {
- b := make([]byte, 16)
- rand.Read(b)
- return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
+	b := make([]byte, 16)
+	rand.Read(b)
+	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
 }
-
-func isUUID(s string) bool {
- if len(s) != 36 {
-  return false
- }
- // Check dashes at positions 8, 13, 18, 23 (use single quotes!)
- if s[8] != '-' || s[13] != '-' || s[18] != '-' || s[23] != '-' {
-  return false
- }
- // Check all other chars are hex
- for i := 0; i < 36; i++ {
-  if i == 8 || i == 13 || i == 18 || i == 23 {
-   continue
-  }
-  c := s[i]
-  if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
-   return false
-  }
- }
- return true
-}
-
 
 func updateProjectsIndex(uuid, projectName string) {
- home, _ := os.UserHomeDir()
- indexPath := filepath.Join(home, GlobalKosBase, "projects.json")
- 
- var index map[string]string
- 
- // Load existing index
- if data, err := os.ReadFile(indexPath); err == nil {
-  json.Unmarshal(data, &index)
- } else {
-  index = make(map[string]string)
- }
- 
- // Add or update entry
- index[uuid] = projectName
- 
- // Save index
- data, _ := json.MarshalIndent(index, "", "  ")
- os.WriteFile(indexPath, data, 0644)
+	home, _ := os.UserHomeDir()
+	indexPath := filepath.Join(home, GlobalKosBase, "projects.json")
+	var index map[string]string
+	if data, err := os.ReadFile(indexPath); err == nil {
+		json.Unmarshal(data, &index)
+	} else {
+		index = make(map[string]string)
+	}
+	index[uuid] = projectName
+	data, _ := json.MarshalIndent(index, "", "  ")
+	os.WriteFile(indexPath, data, 0644)
+}
+
+func getKosDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		home = "."
+	}
+	if data, err := os.ReadFile(".kos-project"); err == nil {
+		projectRef := strings.TrimSpace(string(data))
+		if projectRef != "" {
+			if isUUID(projectRef) {
+				return filepath.Join(home, GlobalKosBase, projectRef)
+			}
+			return filepath.Join(home, GlobalKosBase, projectRef)
+		}
+	}
+	cwd, _ := os.Getwd()
+	projectName := filepath.Base(cwd)
+	if projectName == "/" || projectName == "" {
+		projectName = "root_project"
+	}
+	return filepath.Join(home, GlobalKosBase, projectName)
 }
 
 type Snapshot struct {
- ID        string            `json:"id"`
- Timestamp int64             `json:"timestamp"`
- Message   string            `json:"message"`
- Filename  string            `json:"filename"`
- Files     map[string]string `json:"files"`
- Tag       string            `json:"tag,omitempty"`
+	ID        string            `json:"id"`
+	Timestamp int64             `json:"timestamp"`
+	Message   string            `json:"message"`
+	Filename  string            `json:"filename"`
+	Files     map[string]string `json:"files"`
+	Tag       string            `json:"tag,omitempty"`
 }
 
 type Manifest struct {
 	Snapshots []Snapshot `json:"snapshots"`
+}
+
+type ProjectInfo struct {
+	UUID        string
+	Name        string
+	CommitCount int
+	LastCommit  time.Time
+	LastMessage string
+	TotalSize   int64
+	Files       []string
 }
 
 func main() {
@@ -183,21 +178,21 @@ func main() {
 		}
 		cmdShare(os.Args[2])
 	case "tag":
-	 if len(os.Args) < 3 {
-	  fmt.Println("Error: missing tag name. Usage: kos tag <name> [snapshot-id]")
-	  os.Exit(1)
-	 }
-	 if len(os.Args) == 3 {
-	  cmdTag(os.Args[2], "")
-	 } else {
-	  cmdTag(os.Args[2], os.Args[3])
-	 }
+		if len(os.Args) < 3 {
+			fmt.Println("Error: missing tag name. Usage: kos tag <name> [snapshot-id]")
+			os.Exit(1)
+		}
+		if len(os.Args) == 3 {
+			cmdTag(os.Args[2], "")
+		} else {
+			cmdTag(os.Args[2], os.Args[3])
+		}
 	case "checkout":
-	 if len(os.Args) < 3 {
-	  fmt.Println("Error: missing snapshot ID or tag. Usage: kos checkout <id-or-tag>")
-	  os.Exit(1)
-	 }
-	 cmdCheckout(os.Args[2:]...)
+		if len(os.Args) < 3 {
+			fmt.Println("Error: missing snapshot ID or tag. Usage: kos checkout <id-or-tag>")
+			os.Exit(1)
+		}
+		cmdCheckout(os.Args[2:]...)
 	default:
 		fmt.Printf("Unknown command: %s\n", command)
 		printUsage()
@@ -228,49 +223,34 @@ func printUsage() {
 }
 
 func cmdInit() {
- // Check if this folder is already a KOS project
- if _, err := os.Stat(".kos-project"); err == nil {
-  fmt.Println("KOS repository already initialized.")
-  return
- }
-
- // Generate UUID for this project
- projectUUID := generateUUID()
-
- // Store UUID in .kos-project FIRST (so getKosDir() works)
- if err := os.WriteFile(".kos-project", []byte(projectUUID), 0644); err != nil {
-  fmt.Printf("Error creating .kos-project: %v\n", err)
-  os.Exit(1)
- }
-
- // NOW get the directory path (it will use the UUID)
- kosDir := getKosDir()
-
- if err := os.MkdirAll(kosDir, 0755); err != nil {
-  fmt.Printf("Error creating %s: %v\n", kosDir, err)
-  os.Exit(1)
- }
-
- manifest := Manifest{Snapshots: []Snapshot{}}
- if err := saveManifest(manifest); err != nil {
-  fmt.Printf("Error creating manifest: %v\n", err)
-  os.Exit(1)
- }
-
- if err := os.WriteFile(IgnoreFile, []byte(""), 0644); err != nil {
-  fmt.Printf("Error creating %s: %v\n", IgnoreFile, err)
-  os.Exit(1)
- }
-
- // Get project name from current directory
- cwd, _ := os.Getwd()
- projectName := filepath.Base(cwd)
-
- // Add to projects.json index
- updateProjectsIndex(projectUUID, projectName)
-
- fmt.Printf("Initialized empty KOS repository in %s\n", kosDir)
- fmt.Printf("Project UUID: %s\n", projectUUID)
+	if _, err := os.Stat(".kos-project"); err == nil {
+		fmt.Println("KOS repository already initialized.")
+		return
+	}
+	projectUUID := generateUUID()
+	if err := os.WriteFile(".kos-project", []byte(projectUUID), 0644); err != nil {
+		fmt.Printf("Error creating .kos-project: %v\n", err)
+		os.Exit(1)
+	}
+	kosDir := getKosDir()
+	if err := os.MkdirAll(kosDir, 0755); err != nil {
+		fmt.Printf("Error creating %s: %v\n", kosDir, err)
+		os.Exit(1)
+	}
+	manifest := Manifest{Snapshots: []Snapshot{}}
+	if err := saveManifest(manifest); err != nil {
+		fmt.Printf("Error creating manifest: %v\n", err)
+		os.Exit(1)
+	}
+	if err := os.WriteFile(IgnoreFile, []byte(""), 0644); err != nil {
+		fmt.Printf("Error creating %s: %v\n", IgnoreFile, err)
+		os.Exit(1)
+	}
+	cwd, _ := os.Getwd()
+	projectName := filepath.Base(cwd)
+	updateProjectsIndex(projectUUID, projectName)
+	fmt.Printf("Initialized empty KOS repository in %s\n", kosDir)
+	fmt.Printf("Project UUID: %s\n", projectUUID)
 }
 
 func cmdIgnore(pattern string) {
@@ -338,47 +318,65 @@ func cmdSave(message string) {
 	fmt.Printf("Saved snapshot %s: %s (%d files)\n", id, message, len(snapshot.Files))
 }
 
+func formatRelativeTime(timestamp int64) string {
+	now := time.Now().Unix()
+	diff := now - timestamp
+	if diff < 60 {
+		return "just now"
+	} else if diff < 3600 {
+		mins := diff / 60
+		if mins == 1 {
+			return "1 min ago"
+		}
+		return fmt.Sprintf("%d mins ago", mins)
+	} else if diff < 86400 {
+		hours := diff / 3600
+		if hours == 1 {
+			return "1 hour ago"
+		}
+		return fmt.Sprintf("%d hours ago", hours)
+	} else if diff < 2592000 {
+		days := diff / 86400
+		if days == 1 {
+			return "1 day ago"
+		}
+		return fmt.Sprintf("%d days ago", days)
+	}
+	return "older"
+}
+
 func cmdView() {
- manifest, err := loadManifest()
- if err != nil {
-  fmt.Printf("Error: Not a KOS repository. Run 'kos init'.\n")
-  os.Exit(1)
- }
- fmt.Println("\033[1;36m")
- fmt.Println("╔══════════════════════════════════════════════════════════╗")
- fmt.Println("║                     KOS_TIMELINE                         ║")
- fmt.Println("╚══════════════════════════════════════════════════════════╝")
- fmt.Println("\033[0m")
- if len(manifest.Snapshots) == 0 {
-  fmt.Println("  No snapshots yet. Use 'kos save <message>' to create one.\n")
-  return
- }
- for i := len(manifest.Snapshots) - 1; i >= 0; i-- {
-  snap := manifest.Snapshots[i]
-  
-  // Get both exact time and relative time
-  t := time.Unix(snap.Timestamp, 0)
-  timeStr := t.Format("Jan 02, 15:04")
-  timeStr2 := formatRelativeTime(snap.Timestamp)
-  
-  // Build tag display string
-  tagStr := ""
-  if snap.Tag != "" {
-   tagStr = fmt.Sprintf(" \033[1;32m[%s]\033[0m", snap.Tag)
-  }
-  
-  // Notice the added (%s) to hold the relative time, and the 5th %s for tagStr
-  fmt.Printf("  \033[36m●\033[0m \033[1;33m%-8s\033[0m ┃ \033[2;37m%s\033[0m (\033[2;37m%s\033[0m) ┃ \033[1;37m%s\033[0m%s\n", 
-   snap.ID, timeStr, timeStr2, snap.Message, tagStr)
-   
-  fmt.Printf("  \033[36m│\033[0m           ┃  %d files\n", len(snap.Files))
-  
-  if i == 0 {
-   fmt.Printf("  \033[36m└──\033[0m (End of history)\n\n")
-  } else {
-   fmt.Printf("  \033[36m│\033[0m\n")
-  }
- }
+	manifest, err := loadManifest()
+	if err != nil {
+		fmt.Printf("Error: Not a KOS repository. Run 'kos init'.\n")
+		os.Exit(1)
+	}
+	fmt.Println("\033[1;36m")
+	fmt.Println("╔══════════════════════════════════════════════════════════╗")
+	fmt.Println("║                     KOS TIMELINE                         ║")
+	fmt.Println("╚══════════════════════════════════════════════════════════╝")
+	fmt.Println("\033[0m")
+	if len(manifest.Snapshots) == 0 {
+		fmt.Println("  No snapshots yet. Use 'kos save <message>' to create one.\n")
+		return
+	}
+	for i := len(manifest.Snapshots) - 1; i >= 0; i-- {
+		snap := manifest.Snapshots[i]
+		t := time.Unix(snap.Timestamp, 0)
+		timeStr := t.Format("Jan 02, 15:04")
+		timeStr2 := formatRelativeTime(snap.Timestamp)
+		tagStr := ""
+		if snap.Tag != "" {
+			tagStr = fmt.Sprintf(" \033[1;32m[%s]\033[0m", snap.Tag)
+		}
+		fmt.Printf("  \033[36m●\033[0m \033[1;33m%-8s\033[0m ┃ \033[2;37m%s (%s)\033[0m ┃ \033[1;37m%s\033[0m%s\n", snap.ID, timeStr, timeStr2, snap.Message, tagStr)
+		fmt.Printf("  \033[36m│\033[0m           ┃  %d files\n", len(snap.Files))
+		if i == 0 {
+			fmt.Printf("  \033[36m└──\033[0m (End of history)\n\n")
+		} else {
+			fmt.Printf("  \033[36m│\033[0m\n")
+		}
+	}
 }
 
 func cmdStatus() {
@@ -463,218 +461,192 @@ func cmdExport(id, destDir string) {
 	fmt.Println("Export complete!")
 }
 
-// resolveRef translates "HEAD", "HEAD~1", tags, or IDs into a Snapshot pointer
 func resolveRef(ref string) *Snapshot {
- manifest, err := loadManifest()
- if err != nil {
-  return nil
- }
- 
- snaps := manifest.Snapshots
- if len(snaps) == 0 {
-  return nil
- }
-
- // Handle HEAD
- if ref == "HEAD" {
-  return &snaps[len(snaps)-1]
- }
-
- // Handle HEAD~1, HEAD~2, etc.
- if strings.HasPrefix(ref, "HEAD~") {
-  parts := strings.Split(ref, "~")
-  if len(parts) == 2 {
-   var offset int
-   fmt.Sscanf(parts[1], "%d", &offset)
-   idx := len(snaps) - 1 - offset
-   if idx >= 0 && idx < len(snaps) {
-    return &snaps[idx]
-   }
-  }
-  return nil
- }
-
- // Handle Tags or exact IDs
- for i := range snaps {
-  if snaps[i].ID == ref || snaps[i].Tag == ref {
-   return &snaps[i]
-  }
- }
-
- return nil
+	manifest, err := loadManifest()
+	if err != nil {
+		return nil
+	}
+	snaps := manifest.Snapshots
+	if len(snaps) == 0 {
+		return nil
+	}
+	if ref == "HEAD" {
+		return &snaps[len(snaps)-1]
+	}
+	if strings.HasPrefix(ref, "HEAD~") {
+		parts := strings.Split(ref, "~")
+		if len(parts) == 2 {
+			var offset int
+			fmt.Sscanf(parts[1], "%d", &offset)
+			idx := len(snaps) - 1 - offset
+			if idx >= 0 && idx < len(snaps) {
+				return &snaps[idx]
+			}
+		}
+		return nil
+	}
+	for i := range snaps {
+		if snaps[i].ID == ref || snaps[i].Tag == ref {
+			return &snaps[i]
+		}
+	}
+	return nil
 }
 
 func cmdCheckout(args ...string) {
- if len(args) == 0 {
-  fmt.Println("Error: missing reference. Usage: kos checkout <id-or-tag> [filename]")
-  os.Exit(1)
- }
-
- ref := args[0]
- var filename string
- if len(args) > 1 {
-  filename = args[1]
- }
-
- snap := resolveRef(ref)
- if snap == nil {
-  fmt.Printf("Error: Snapshot '%s' not found (by ID or tag)\n", ref)
-  os.Exit(1)
- }
-
- // Show warning
- fmt.Printf("\n\033[1;33m⚠️  CHECKOUT WARNING\033[0m\n")
- fmt.Printf("This will restore snapshot \033[1;36m%s\033[0m", snap.ID)
- if snap.Tag != "" {
-  fmt.Printf(" \033[1;32m[%s]\033[0m", snap.Tag)
- }
- fmt.Println()
- 
- if filename != "" {
-  fmt.Printf("Target: Single file \033[1;37m%s\033[0m\n", filename)
- } else {
-  fmt.Printf("Target: \033[1;37mEntire working directory\033[0m\n")
- }
- 
- fmt.Printf("Message: \033[2;37m%s\033[0m\n", snap.Message)
- fmt.Printf("\n\033[33mAre you sure? This will overwrite current files. (y/N): \033[0m")
-
- var response string
- fmt.Scanln(&response)
-
- if response != "y" && response != "Y" {
-  fmt.Println("\n\033[2;37mCheckout cancelled.\033[0m\n")
-  return
- }
-
- tarPath := filepath.Join(getKosDir(), snap.Filename)
-
- if filename != "" {
-  // Single file checkout
-  content, err := extractFileFromTar(tarPath, filename)
-  if err != nil {
-   fmt.Printf("\n\033[31mError: File '%s' not found in snapshot %s\033[0m\n", filename, snap.ID)
-   os.Exit(1)
-  }
-  
-  // Ensure directory exists
-  os.MkdirAll(filepath.Dir(filename), 0755)
-  if err := os.WriteFile(filename, []byte(content), 0644); err != nil {
-   fmt.Printf("\n\033[31mError writing file: %v\033[0m\n", err)
-   os.Exit(1)
-  }
-  fmt.Printf("\n\033[1;32m✅ Restored '%s' from snapshot %s\033[0m\n\n", filename, snap.ID)
- } else {
-  // Full directory checkout
-  if err := extractTarGz(tarPath, "."); err != nil {
-   fmt.Printf("Error: Failed to extract snapshot: %v\n", err)
-   os.Exit(1)
-  }
-  fmt.Printf("\n\033[1;32m✅ Checked out snapshot %s\033[0m\n", snap.ID)
-  fmt.Printf("\033[2;37mYour working directory now matches this snapshot.\033[0m\n\n")
- }
-}
-
-func cmdLoad(args ...string) {
 	if len(args) == 0 {
-		fmt.Println("Error: missing argument")
+		fmt.Println("Error: missing reference. Usage: kos checkout <id-or-tag> [filename]")
 		os.Exit(1)
 	}
-	target := args[0]
-	if strings.HasSuffix(target, ".tar.gz") {
-		if _, err := os.Stat(target); os.IsNotExist(err) {
-			fmt.Printf("Error: File '%s' not found\n", target)
-			os.Exit(1)
-		}
-		fmt.Printf("\n\033[1;36m📦 Loading from file: %s\033[0m\n\n", target)
-		tempDir, err := os.MkdirTemp("", "kos-load-*")
-		if err != nil {
-			fmt.Printf("Error: Cannot create temp directory: %v\n", err)
-			os.Exit(1)
-		}
-		defer os.RemoveAll(tempDir)
-		if err := extractTarGz(target, tempDir); err != nil {
-			fmt.Printf("Error: Failed to extract: %v\n", err)
-			os.Exit(1)
-		}
-		embeddedManifestPath := filepath.Join(tempDir, ".kos", ManifestFile)
-		var embeddedManifest Manifest
-		if data, err := os.ReadFile(embeddedManifestPath); err == nil {
-			json.Unmarshal(data, &embeddedManifest)
-		} else {
-			embeddedManifest = Manifest{Snapshots: []Snapshot{}}
-		}
-		projectName := "imported-project"
-		home, _ := os.UserHomeDir()
-		globalProjectDir := filepath.Join(home, GlobalKosBase, projectName)
-		os.MkdirAll(globalProjectDir, 0755)
-		tarData, err := os.ReadFile(target)
-		if err != nil {
-			fmt.Printf("Error: Cannot read snapshot file: %v\n", err)
-			os.Exit(1)
-		}
-		baseName := filepath.Base(target)
-		globalTarPath := filepath.Join(globalProjectDir, baseName)
-		if err := os.WriteFile(globalTarPath, tarData, 0644); err != nil {
-			fmt.Printf("Error: Cannot copy to global store: %v\n", err)
-			os.Exit(1)
-		}
-		manifestData, _ := json.MarshalIndent(embeddedManifest, "", "  ")
-		globalManifestPath := filepath.Join(globalProjectDir, ManifestFile)
-		if err := os.WriteFile(globalManifestPath, manifestData, 0644); err != nil {
-			fmt.Printf("Error: Cannot save manifest: %v\n", err)
-			os.Exit(1)
-		}
-		if err := extractTarGz(target, "."); err != nil {
-			fmt.Printf("Error: Failed to extract files: %v\n", err)
-			os.Exit(1)
-		}
-		os.WriteFile(".kos-project", []byte(projectName), 0644)
-		fmt.Printf("\n\033[1;32m✅ Loaded successfully!\033[0m\n")
-		fmt.Printf("   Project: \033[1;36m%s\033[0m\n", projectName)
-		fmt.Printf("   Commits: \033[1;36m%d\033[0m\n", len(embeddedManifest.Snapshots))
-		fmt.Printf("\n\033[2;37mRun 'kos view' to see the timeline.\033[0m\n\n")
+	ref := args[0]
+	var filename string
+	if len(args) > 1 {
+		filename = args[1]
+	}
+	snap := resolveRef(ref)
+	if snap == nil {
+		fmt.Printf("Error: Snapshot '%s' not found (by ID or tag)\n", ref)
+		os.Exit(1)
+	}
+	fmt.Printf("\n\033[1;33m⚠️  CHECKOUT WARNING\033[0m\n")
+	fmt.Printf("This will restore snapshot \033[1;36m%s\033[0m", snap.ID)
+	if snap.Tag != "" {
+		fmt.Printf(" \033[1;32m[%s]\033[0m", snap.Tag)
+	}
+	fmt.Println()
+	if filename != "" {
+		fmt.Printf("Target: Single file \033[1;37m%s\033[0m\n", filename)
+	} else {
+		fmt.Printf("Target: \033[1;37mEntire working directory\033[0m\n")
+	}
+	fmt.Printf("Message: \033[2;37m%s\033[0m\n", snap.Message)
+	fmt.Printf("\n\033[33mAre you sure? This will overwrite current files. (y/N): \033[0m")
+	var response string
+	fmt.Scanln(&response)
+	if response != "y" && response != "Y" {
+		fmt.Println("\n\033[2;37mCheckout cancelled.\033[0m\n")
 		return
 	}
-	projectName := target
+	tarPath := filepath.Join(getKosDir(), snap.Filename)
+	if filename != "" {
+		content, err := extractFileFromTar(tarPath, filename)
+		if err != nil {
+			fmt.Printf("\n\033[31mError: File '%s' not found in snapshot %s\033[0m\n", filename, snap.ID)
+			os.Exit(1)
+		}
+		os.MkdirAll(filepath.Dir(filename), 0755)
+		if err := os.WriteFile(filename, []byte(content), 0644); err != nil {
+			fmt.Printf("\n\033[31mError writing file: %v\033[0m\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("\n\033[1;32m✅ Restored '%s' from snapshot %s\033[0m\n\n", filename, snap.ID)
+	} else {
+		if err := extractTarGz(tarPath, "."); err != nil {
+			fmt.Printf("Error: Failed to extract snapshot: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("\n\033[1;32m✅ Checked out snapshot %s\033[0m\n", snap.ID)
+		fmt.Printf("\033[2;37mYour working directory now matches this snapshot.\033[0m\n\n")
+	}
+}
+
+func findProjectsByName(name string) []string {
 	home, _ := os.UserHomeDir()
-	globalProjectDir := filepath.Join(home, GlobalKosBase, projectName)
-	manifestPath := filepath.Join(globalProjectDir, ManifestFile)
-	if _, err := os.Stat(manifestPath); os.IsNotExist(err) {
-		fmt.Printf("Error: No global repository found for project '%s'.\n", projectName)
-		fmt.Println("Did you mean to run 'kos init' first?")
-		os.Exit(1)
+	indexPath := filepath.Join(home, GlobalKosBase, "projects.json")
+	var index map[string]string
+	if data, err := os.ReadFile(indexPath); err == nil {
+		json.Unmarshal(data, &index)
+	} else {
+		return []string{}
+	}
+	var matches []string
+	for uuid, projectName := range index {
+		if projectName == name {
+			matches = append(matches, uuid)
+		}
+	}
+	return matches
+}
+
+func getProjectInfo(uuid string) (ProjectInfo, error) {
+	home, _ := os.UserHomeDir()
+	projectDir := filepath.Join(home, GlobalKosBase, uuid)
+	manifestPath := filepath.Join(projectDir, ManifestFile)
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return ProjectInfo{}, err
 	}
 	var m Manifest
+	json.Unmarshal(data, &m)
+	indexPath := filepath.Join(home, GlobalKosBase, "projects.json")
+	var index map[string]string
+	if indexData, err := os.ReadFile(indexPath); err == nil {
+		json.Unmarshal(indexData, &index)
+	}
+	info := ProjectInfo{
+		UUID:        uuid,
+		Name:        index[uuid],
+		CommitCount: len(m.Snapshots),
+	}
+	if len(m.Snapshots) > 0 {
+		lastSnap := m.Snapshots[len(m.Snapshots)-1]
+		info.LastCommit = time.Unix(lastSnap.Timestamp, 0)
+		info.LastMessage = lastSnap.Message
+		info.Files = make([]string, 0, len(lastSnap.Files))
+		for file := range lastSnap.Files {
+			info.Files = append(info.Files, file)
+		}
+	}
+	snapEntries, _ := os.ReadDir(projectDir)
+	for _, entry := range snapEntries {
+		if strings.HasPrefix(entry.Name(), "snap_") && strings.HasSuffix(entry.Name(), ".tar.gz") {
+			if entryInfo, err := entry.Info(); err == nil {
+				info.TotalSize += entryInfo.Size()
+			}
+		}
+	}
+	return info, nil
+}
+
+func showProjectPreview(info ProjectInfo) {
+	fmt.Printf("\nProject \033[1;36m%s\033[0m\n", info.Name)
+	fmt.Println("───────────────────────")
+	fmt.Printf("Latest snapshot: \033[1;37m\"%s\"\033[0m\n", info.LastMessage)
+	fmt.Printf("Files: \033[1;33m%d\033[0m\n", len(info.Files))
+	fmt.Printf("Size: \033[1;33m%s\033[0m\n\n", formatBytes(info.TotalSize))
+	limit := 5
+	if len(info.Files) < limit {
+		limit = len(info.Files)
+	}
+	for i := 0; i < limit; i++ {
+		fmt.Printf("  \033[2;37m%s\033[0m\n", info.Files[i])
+	}
+	if len(info.Files) > 5 {
+		fmt.Printf("  \033[2;37m... and %d more\033[0m\n", len(info.Files)-5)
+	}
+	fmt.Println()
+}
+
+func loadProjectByUUID(uuid string, info ProjectInfo) {
+	home, _ := os.UserHomeDir()
+	globalProjectDir := filepath.Join(home, GlobalKosBase, uuid)
+	manifestPath := filepath.Join(globalProjectDir, ManifestFile)
 	data, err := os.ReadFile(manifestPath)
 	if err != nil {
 		fmt.Printf("Error reading manifest: %v\n", err)
 		os.Exit(1)
 	}
+	var m Manifest
 	json.Unmarshal(data, &m)
 	if len(m.Snapshots) == 0 {
 		fmt.Println("Error: Project exists but has no snapshots.")
 		os.Exit(1)
 	}
 	var targetSnap *Snapshot
-	if len(args) > 1 {
-		snapshotID := args[1]
-		for i := range m.Snapshots {
-			if m.Snapshots[i].ID == snapshotID {
-				targetSnap = &m.Snapshots[i]
-				break
-			}
-		}
-		if targetSnap == nil {
-			fmt.Printf("Error: Snapshot ID '%s' not found.\n", snapshotID)
-			os.Exit(1)
-		}
-	} else {
-		for i := len(m.Snapshots) - 1; i >= 0; i-- {
-			if len(m.Snapshots[i].Files) > 0 {
-				targetSnap = &m.Snapshots[i]
-				break
-			}
+	for i := len(m.Snapshots) - 1; i >= 0; i-- {
+		if len(m.Snapshots[i].Files) > 0 {
+			targetSnap = &m.Snapshots[i]
+			break
 		}
 	}
 	if targetSnap == nil {
@@ -682,7 +654,7 @@ func cmdLoad(args ...string) {
 		os.Exit(1)
 	}
 	tarPath := filepath.Join(globalProjectDir, targetSnap.Filename)
-	fmt.Printf("🌍 Loading global project '%s' into current directory...\n", projectName)
+	fmt.Printf("Loading project '%s' into current directory...\n", info.Name)
 	fmt.Printf("   Restoring from: %s (ID: %s)\n", targetSnap.Filename, targetSnap.ID)
 	if err := extractTarGz(tarPath, "."); err != nil {
 		fmt.Printf("Error extracting: %v\n", err)
@@ -690,12 +662,164 @@ func cmdLoad(args ...string) {
 	}
 	ignorePath := filepath.Join(globalProjectDir, IgnoreFile)
 	if _, err := os.Stat(ignorePath); err == nil {
-		data, _ := os.ReadFile(ignorePath)
-		os.WriteFile(IgnoreFile, data, 0644)
+		ignoreData, _ := os.ReadFile(ignorePath)
+		os.WriteFile(IgnoreFile, ignoreData, 0644)
 	}
-	os.WriteFile(".kos-project", []byte(projectName), 0644)
-	fmt.Println("✅ Load complete! History and files restored.")
-	fmt.Println("💡 Tip: Run 'kos view' to see your restored timeline.")
+	os.WriteFile(".kos-project", []byte(uuid), 0644)
+	fmt.Println("Load complete! History and files restored.")
+	fmt.Println("Tip: Run 'kos view' to see your restored timeline.")
+}
+
+func cmdLoad(args ...string) {
+ if len(args) == 0 {
+  fmt.Println("Error: missing argument")
+  os.Exit(1)
+ }
+ target := args[0]
+ 
+ // Handle .tar.gz file import
+ if strings.HasSuffix(target, ".tar.gz") {
+  if _, err := os.Stat(target); os.IsNotExist(err) {
+   fmt.Printf("Error: File '%s' not found\n", target)
+   os.Exit(1)
+  }
+  fmt.Printf("\n\033[1;36m📦 Loading from file: %s\033[0m\n\n", target)
+  tempDir, err := os.MkdirTemp("", "kos-load-*")
+  if err != nil {
+   fmt.Printf("Error: Cannot create temp directory: %v\n", err)
+   os.Exit(1)
+  }
+  defer os.RemoveAll(tempDir)
+  if err := extractTarGz(target, tempDir); err != nil {
+   fmt.Printf("Error: Failed to extract: %v\n", err)
+   os.Exit(1)
+  }
+  embeddedManifestPath := filepath.Join(tempDir, ".kos", ManifestFile)
+  var embeddedManifest Manifest
+  if data, err := os.ReadFile(embeddedManifestPath); err == nil {
+   json.Unmarshal(data, &embeddedManifest)
+  } else {
+   embeddedManifest = Manifest{Snapshots: []Snapshot{}}
+  }
+  projectUUID := generateUUID()
+  home, _ := os.UserHomeDir()
+  globalProjectDir := filepath.Join(home, GlobalKosBase, projectUUID)
+  os.MkdirAll(globalProjectDir, 0755)
+  tarData, err := os.ReadFile(target)
+  if err != nil {
+   fmt.Printf("Error: Cannot read snapshot file: %v\n", err)
+   os.Exit(1)
+  }
+  baseName := filepath.Base(target)
+  globalTarPath := filepath.Join(globalProjectDir, baseName)
+  if err := os.WriteFile(globalTarPath, tarData, 0644); err != nil {
+   fmt.Printf("Error: Cannot copy to global store: %v\n", err)
+   os.Exit(1)
+  }
+  manifestData, _ := json.MarshalIndent(embeddedManifest, "", "  ")
+  globalManifestPath := filepath.Join(globalProjectDir, ManifestFile)
+  if err := os.WriteFile(globalManifestPath, manifestData, 0644); err != nil {
+   fmt.Printf("Error: Cannot save manifest: %v\n", err)
+   os.Exit(1)
+  }
+  if err := extractTarGz(target, "."); err != nil {
+   fmt.Printf("Error: Failed to extract files: %v\n", err)
+   os.Exit(1)
+  }
+  os.WriteFile(".kos-project", []byte(projectUUID), 0644)
+  cwd, _ := os.Getwd()
+  projectName := filepath.Base(cwd)
+  updateProjectsIndex(projectUUID, projectName)
+  fmt.Printf("\n\033[1;32m✅ Loaded successfully!\033[0m\n")
+  fmt.Printf("   Project: \033[1;36m%s\033[0m\n", projectName)
+  fmt.Printf("   UUID: \033[2;37m%s\033[0m\n", projectUUID)
+  fmt.Printf("   Commits: \033[1;36m%d\033[0m\n", len(embeddedManifest.Snapshots))
+  fmt.Printf("\n\033[2;37mRun 'kos view' to see the timeline.\033[0m\n\n")
+  return
+ }
+ 
+ // Check if current directory is already a KOS project
+ if _, err := os.Stat(".kos-project"); err == nil {
+  fmt.Println("Error: Current directory is already a KOS project.")
+  fmt.Println("Run 'kos load' from an empty directory.")
+  os.Exit(1)
+ }
+ 
+ // Check if target is a UUID
+ if isUUID(target) {
+  info, err := getProjectInfo(target)
+  if err != nil {
+   fmt.Printf("Error: Project with UUID '%s' not found.\n", target)
+   os.Exit(1)
+  }
+  loadProjectByUUID(target, info)
+  return
+ }
+ 
+ // Find all projects with this name
+ matches := findProjectsByName(target)
+ 
+ if len(matches) == 0 {
+  fmt.Printf("Error: No project named '%s' found in global store.\n", target)
+  fmt.Println("Did you mean to run 'kos init' first?")
+  os.Exit(1)
+ }
+ 
+ if len(matches) == 1 {
+  uuid := matches[0]
+  info, err := getProjectInfo(uuid)
+  if err != nil {
+   fmt.Printf("Error loading project: %v\n", err)
+   os.Exit(1)
+  }
+  showProjectPreview(info)
+  fmt.Printf("Load this project? [y/N]: ")
+  var response string
+  fmt.Scanln(&response)
+  if response != "y" && response != "Y" {
+   fmt.Println("Load cancelled.")
+   return
+  }
+  loadProjectByUUID(uuid, info)
+  return
+ }
+ 
+ // Multiple matches - show picker
+ fmt.Printf("\n\033[1;33m🔀 Multiple projects named '%s' found:\033[0m\n\n", target)
+ for i, uuid := range matches {
+	info, _ := getProjectInfo(uuid)
+  fmt.Printf("  [\033[1;33m%d\033[0m] \033[2;37m%s\033[0m │ %d commits │ %s\n",
+   i+1, uuid[:8], info.CommitCount, info.LastCommit.Format("Jan 02, 15:04"))
+ }
+ 
+ fmt.Printf("\nSelect project [1-%d/Q]: ", len(matches))
+ var choice string
+ fmt.Scanln(&choice)
+ if choice == "Q" || choice == "q" {
+  fmt.Println("Load cancelled.")
+  return
+ }
+ var idx int
+ fmt.Sscanf(choice, "%d", &idx)
+ if idx < 1 || idx > len(matches) {
+  fmt.Println("Invalid selection.")
+  os.Exit(1)
+ }
+ uuid := matches[idx-1]
+ info, err := getProjectInfo(uuid)
+ if err != nil {
+  fmt.Printf("Error loading project: %v\n", err)
+  os.Exit(1)
+ }
+ showProjectPreview(info)
+ fmt.Printf("Load this project? [y/N]: ")
+ var response string
+ fmt.Scanln(&response)
+ if response != "y" && response != "Y" {
+  fmt.Println("Load cancelled.")
+  return
+ }
+ loadProjectByUUID(uuid, info)
 }
 
 func cmdStats() {
@@ -757,37 +881,6 @@ func formatBytes(bytes int64) string {
 	return fmt.Sprintf("%.1f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
 }
 
-func formatRelativeTime(timestamp int64) string {
- now := time.Now().Unix()
- diff := now - timestamp
- 
- if diff < 60 {
-  return "just now"
- } else if diff < 3600 {
-  mins := diff / 60
-  if mins == 1 {
-   return "1 minute ago"
-  }
-  return fmt.Sprintf("%d minutes ago", mins)
- } else if diff < 86400 {
-  hours := diff / 3600
-  if hours == 1 {
-   return "1 hour ago"
-  }
-  return fmt.Sprintf("%d hours ago", hours)
- } else if diff < 2592000 {
-  days := diff / 86400
-  if days == 1 {
-   return "1 day ago"
-  }
-  return fmt.Sprintf("%d days ago", days)
- } else {
-  // Fall back to date format for older commits
-  t := time.Unix(timestamp, 0)
-  return t.Format("Jan 02, 15:04")
- }
-}
-
 func cmdQuickSave() {
 	timestamp := time.Now().Format("2006-01-02 15:04:05")
 	message := fmt.Sprintf("Quick save: %s", timestamp)
@@ -795,55 +888,44 @@ func cmdQuickSave() {
 }
 
 func cmdProjects() {
- home, err := os.UserHomeDir()
- if err != nil {
-  fmt.Printf("Error: Cannot determine home directory\n")
-  os.Exit(1)
- }
- 
- globalDir := filepath.Join(home, GlobalKosBase)
- indexPath := filepath.Join(globalDir, "projects.json")
- 
- // Load projects index
- var index map[string]string
- if data, err := os.ReadFile(indexPath); err == nil {
-  json.Unmarshal(data, &index)
- } else {
-  index = make(map[string]string)
- }
- 
- fmt.Println("\n\033[1;36m📦 KOS PROJECTS\033[0m\n")
- 
- // Iterate through UUIDs in index
- for uuid, projectName := range index {
-  projectDir := filepath.Join(globalDir, uuid)
-  manifestPath := filepath.Join(projectDir, ManifestFile)
-  
-  var m Manifest
-  data, err := os.ReadFile(manifestPath)
-  if err != nil {
-   continue
-  }
-  json.Unmarshal(data, &m)
-  
-  var totalSize int64
-  snapEntries, _ := os.ReadDir(projectDir)
-  for _, snapEntry := range snapEntries {
-   if strings.HasPrefix(snapEntry.Name(), "snap_") && strings.HasSuffix(snapEntry.Name(), ".tar.gz") {
-    info, _ := snapEntry.Info()
-    if info != nil {
-     totalSize += info.Size()
-    }
-   }
-  }
-  
-  commitCount := len(m.Snapshots)
-  sizeStr := formatBytes(totalSize)
-  
-  fmt.Printf("  \033[1;33m%-20s\033[0m \033[2;37m%d commits, %s\033[0m\n", projectName, commitCount, sizeStr)
- }
- 
- fmt.Println()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		fmt.Printf("Error: Cannot determine home directory\n")
+		os.Exit(1)
+	}
+	globalDir := filepath.Join(home, GlobalKosBase)
+	indexPath := filepath.Join(globalDir, "projects.json")
+	var index map[string]string
+	if data, err := os.ReadFile(indexPath); err == nil {
+		json.Unmarshal(data, &index)
+	} else {
+		index = make(map[string]string)
+	}
+	fmt.Println("\n\033[1;36m📦 KOS PROJECTS\033[0m\n")
+	for uuid, projectName := range index {
+		projectDir := filepath.Join(globalDir, uuid)
+		manifestPath := filepath.Join(projectDir, ManifestFile)
+		var m Manifest
+		data, err := os.ReadFile(manifestPath)
+		if err != nil {
+			continue
+		}
+		json.Unmarshal(data, &m)
+		var totalSize int64
+		snapEntries, _ := os.ReadDir(projectDir)
+		for _, snapEntry := range snapEntries {
+			if strings.HasPrefix(snapEntry.Name(), "snap") && strings.HasSuffix(snapEntry.Name(), ".tar.gz") {
+				info, _ := snapEntry.Info()
+				if info != nil {
+					totalSize += info.Size()
+				}
+			}
+		}
+		commitCount := len(m.Snapshots)
+		sizeStr := formatBytes(totalSize)
+		fmt.Printf("  \033[1;33m%-20s\033[0m \033[2;37m%d commits, %s\033[0m\n", projectName, commitCount, sizeStr)
+	}
+	fmt.Println()
 }
 
 func cmdRename(newName string) {
@@ -901,72 +983,56 @@ func cmdSearch(keyword string) {
 	fmt.Println()
 }
 
- func cmdTag(tagName, snapshotID string) {
-  manifest, err := loadManifest()
-  if err != nil {
-   fmt.Printf("Error: Not a KOS repository. Run 'kos init'.\n")
-   os.Exit(1)
-  }
- 
-  if len(manifest.Snapshots) == 0 {
-   fmt.Println("Error: No snapshots to tag.")
-   os.Exit(1)
-  }
- 
-  // Check if tag name is already used
-  for _, snap := range manifest.Snapshots {
-   if snap.Tag == tagName {
-    fmt.Printf("Error: Tag '%s' already exists on snapshot %s\n", tagName, snap.ID)
-    os.Exit(1)
-   }
-  }
- 
-  // Find the snapshot to tag
-  var targetSnap *Snapshot
-  if snapshotID == "" {
-   // Tag the latest snapshot
-   targetSnap = &manifest.Snapshots[len(manifest.Snapshots)-1]
-  } else {
-   for i := range manifest.Snapshots {
-    if manifest.Snapshots[i].ID == snapshotID {
-     targetSnap = &manifest.Snapshots[i]
-     break
-    }
-   }
-   if targetSnap == nil {
-    fmt.Printf("Error: Snapshot '%s' not found\n", snapshotID)
-    os.Exit(1)
-   }
-  }
- 
-  // Apply the tag
-  targetSnap.Tag = tagName
- 
-  if err := saveManifest(manifest); err != nil {
-   fmt.Printf("Error saving manifest: %v\n", err)
-   os.Exit(1)
-  }
- 
-  fmt.Printf("✅ Tagged snapshot \033[1;33m%s\033[0m as \033[1;32m[%s]\033[0m\n", targetSnap.ID, tagName)
- }
- 
-func cmdShare(snapshotID string) {
+func cmdTag(tagName, snapshotID string) {
 	manifest, err := loadManifest()
 	if err != nil {
 		fmt.Printf("Error: Not a KOS repository. Run 'kos init'.\n")
 		os.Exit(1)
 	}
-	var targetSnap *Snapshot
-	for i := range manifest.Snapshots {
-		if manifest.Snapshots[i].ID == snapshotID {
-			targetSnap = &manifest.Snapshots[i]
-			break
-		}
-	}
-	if targetSnap == nil {
-		fmt.Printf("Error: Snapshot '%s' not found\n", snapshotID)
+	if len(manifest.Snapshots) == 0 {
+		fmt.Println("Error: No snapshots to tag.")
 		os.Exit(1)
 	}
+	for _, snap := range manifest.Snapshots {
+		if snap.Tag == tagName {
+			fmt.Printf("Error: Tag '%s' already exists on snapshot %s\n", tagName, snap.ID)
+			os.Exit(1)
+		}
+	}
+	var targetSnap *Snapshot
+	if snapshotID == "" {
+		targetSnap = &manifest.Snapshots[len(manifest.Snapshots)-1]
+	} else {
+		for i := range manifest.Snapshots {
+			if manifest.Snapshots[i].ID == snapshotID {
+				targetSnap = &manifest.Snapshots[i]
+				break
+			}
+		}
+		if targetSnap == nil {
+			fmt.Printf("Error: Snapshot '%s' not found\n", snapshotID)
+			os.Exit(1)
+		}
+	}
+	targetSnap.Tag = tagName
+	if err := saveManifest(manifest); err != nil {
+		fmt.Printf("Error saving manifest: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("✅ Tagged snapshot \033[1;33m%s\033[0m as \033[1;32m[%s]\033[0m\n", targetSnap.ID, tagName)
+}
+
+func cmdShare(snapshotID string) {
+ _, err := loadManifest()
+ if err != nil {
+  fmt.Printf("Error: Not a KOS repository. Run 'kos init'.\n")
+  os.Exit(1)
+ }
+ targetSnap := resolveRef(snapshotID)
+ if targetSnap == nil {
+  fmt.Printf("Error: Snapshot '%s' not found (by ID or tag)\n", snapshotID)
+  os.Exit(1)
+ }
 	sourcePath := filepath.Join(getKosDir(), targetSnap.Filename)
 	destPath := targetSnap.Filename
 	data, err := os.ReadFile(sourcePath)
@@ -984,25 +1050,19 @@ func cmdShare(snapshotID string) {
 	fmt.Printf("\n\033[2;37mShare this file via email, USB, or cloud storage.\033[0m\n")
 	fmt.Printf("\033[2;37mRecipients can load it with: kos load %s\033[0m\n\n", destPath)
 }
+
 func cmdDiffSummary(id1, id2 string) {
-	manifest, err := loadManifest()
-	if err != nil {
-		fmt.Printf("Error: Not a KOS repository.\n")
-		os.Exit(1)
-	}
-	var snap1, snap2 *Snapshot
-	for i := range manifest.Snapshots {
-		if manifest.Snapshots[i].ID == id1 {
-			snap1 = &manifest.Snapshots[i]
-		}
-		if manifest.Snapshots[i].ID == id2 {
-			snap2 = &manifest.Snapshots[i]
-		}
-	}
-	if snap1 == nil || snap2 == nil {
-		fmt.Printf("Error: One or both snapshot IDs not found.\n")
-		os.Exit(1)
-	}
+ _, err := loadManifest()
+ if err != nil {
+  fmt.Printf("Error: Not a KOS repository.\n")
+  os.Exit(1)
+ }
+ snap1 := resolveRef(id1)
+ snap2 := resolveRef(id2)
+ if snap1 == nil || snap2 == nil {
+  fmt.Printf("Error: One or both references not found (by ID, tag, or HEAD).\n")
+  os.Exit(1)
+ }
 	var added, deleted, modified []string
 	for path, hash2 := range snap2.Files {
 		hash1, exists := snap1.Files[path]
@@ -1052,28 +1112,21 @@ func cmdDiffSummary(id1, id2 string) {
 		}
 	}
 	fmt.Println("\n\033[2;37m💡 Tip: To see the actual code changes, run:\033[0m")
-	fmt.Printf("  \033[1;36mkos diff %s %s <filename>\033[0m\n\n", id1, id2)
+	fmt.Printf("  \033[1;6mkos diff %s %s <filename>\033[0m\n\n", id1, id2)
 }
 
 func cmdDiffFile(id1, id2, filename string) {
-	manifest, err := loadManifest()
-	if err != nil {
-		fmt.Printf("Error: Not a KOS repository.\n")
-		os.Exit(1)
-	}
-	var snap1, snap2 *Snapshot
-	for i := range manifest.Snapshots {
-		if manifest.Snapshots[i].ID == id1 {
-			snap1 = &manifest.Snapshots[i]
-		}
-		if manifest.Snapshots[i].ID == id2 {
-			snap2 = &manifest.Snapshots[i]
-		}
-	}
-	if snap1 == nil || snap2 == nil {
-		fmt.Printf("Error: One or both snapshot IDs not found.\n")
-		os.Exit(1)
-	}
+ _, err := loadManifest()
+ if err != nil {
+  fmt.Printf("Error: Not a KOS repository.\n")
+  os.Exit(1)
+ }
+ snap1 := resolveRef(id1)
+ snap2 := resolveRef(id2)
+ if snap1 == nil || snap2 == nil {
+  fmt.Printf("Error: One or both references not found (by ID, tag, or HEAD).\n")
+  os.Exit(1)
+ }
 	fmt.Printf("\n\033[1;36m--- CODE DIFF: %s ---\033[0m\n", filename)
 	oldContent, err := extractFileFromTar(filepath.Join(getKosDir(), snap1.Filename), filename)
 	if err != nil {
@@ -1274,41 +1327,51 @@ func extractTarGz(tarPath, destDir string) error {
    return err
   }
   
-  // Smart path extraction: look for .kos/ or just use basename
+  // Safe path handling - preserve directory structure
   cleanName := header.Name
-  if idx := strings.Index(cleanName, ".kos/"); idx >= 0 {
-   // Extract from .kos/ onwards
-   cleanName = cleanName[idx:]
-  } else if strings.Contains(cleanName, string(os.PathSeparator)) || strings.Contains(cleanName, "/") {
-   // If it's a deeply nested absolute path, just use the basename
-   cleanName = filepath.Base(cleanName)
-  } else {
-   // Otherwise, just strip leading slashes
-   cleanName = strings.TrimLeft(cleanName, "/\\")
+  
+  // Remove .kos/ prefix if present
+  if strings.HasPrefix(cleanName, ".kos/") {
+   cleanName = strings.TrimPrefix(cleanName, ".kos/")
   }
   
-  if cleanName == "" {
+  // Skip empty or dangerous paths
+  if cleanName == "" || cleanName == "." || strings.Contains(cleanName, "..") {
    continue
   }
   
   target := filepath.Join(destDir, cleanName)
+  
+  // Security check: prevent path traversal
   absTarget, err := filepath.Abs(target)
   if err != nil {
    return err
   }
   if !strings.HasPrefix(absTarget, absDest+string(os.PathSeparator)) && absTarget != absDest {
-   return fmt.Errorf("illegal file path: %s", header.Name)
+   fmt.Printf("Warning: Skipping unsafe path: %s\n", header.Name)
+   continue
   }
+  
   switch header.Typeflag {
   case tar.TypeDir:
-   os.MkdirAll(target, 0755)
+   if err := os.MkdirAll(target, 0755); err != nil {
+    fmt.Printf("Warning: Cannot create directory %s: %v\n", target, err)
+   }
   case tar.TypeReg:
-   os.MkdirAll(filepath.Dir(target), 0755)
-   f, err := os.OpenFile(target, os.O_CREATE|os.O_RDWR, os.FileMode(header.Mode))
-   if err != nil {
+   if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+    fmt.Printf("Warning: Cannot create parent directory for %s: %v\n", target, err)
     continue
    }
-   io.Copy(f, tr)
+   f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(header.Mode))
+   if err != nil {
+    fmt.Printf("Warning: Cannot create file %s: %v\n", target, err)
+    continue
+   }
+   if _, err := io.Copy(f, tr); err != nil {
+    f.Close()
+    fmt.Printf("Warning: Error writing file %s: %v\n", target, err)
+    continue
+   }
    f.Close()
   }
  }
@@ -1345,3 +1408,4 @@ func extractFileFromTar(tarPath, fileName string) (string, error) {
 	}
 	return "", fmt.Errorf("file not found in archive")
 }
+

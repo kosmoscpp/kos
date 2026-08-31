@@ -4,3 +4,4 @@ kos
 *.tar.gz
 *.exe
 home/
+*.json

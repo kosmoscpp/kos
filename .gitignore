@@ -8,3 +8,5 @@ home/
 .kos/
 .kos-project
 .kosignore
+uuid.json
+manifest.json

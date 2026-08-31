@@ -366,54 +366,85 @@ func cmdIgnore(pattern string) {
 }
 
 func cmdSave(message string) {
-	manifest, err := loadManifest()
-	if err != nil {
-		fmt.Printf("Error: Not a KOS repository. Run 'kos init'.\n")
-		os.Exit(1)
-	}
-	id := fmt.Sprintf("%x", time.Now().UnixNano())[:8]
-	filename := fmt.Sprintf("snap_%s.tar.gz", id)
-	filepathTar := filepath.Join(getKosDir(), filename)
-	snapshot := Snapshot{
-		ID:        id,
-		Timestamp: time.Now().Unix(),
-		Message:   message,
-		Filename:  filename,
-		Files:     make(map[string]string),
-	}
-	currentFiles, err := getWorkingDirectoryFiles()
-	if err != nil {
-		fmt.Printf("Error scanning directory: %v\n", err)
-		os.Exit(1)
-	}
-	snapshot.Files = currentFiles
-	manifest.Snapshots = append(manifest.Snapshots, snapshot)
-	file, err := os.Create(filepathTar)
-	if err != nil {
-		fmt.Printf("Error creating snapshot file: %v\n", err)
-		os.Exit(1)
-	}
-	defer file.Close()
-	gzw := gzip.NewWriter(file)
-	defer gzw.Close()
-	tw := tar.NewWriter(gzw)
-	defer tw.Close()
-	for path := range currentFiles {
-		addFileToTar(tw, path)
-	}
-	manifestData, _ := json.MarshalIndent(manifest, "", "  ")
-	mHeader := &tar.Header{
-		Name: ".kos/" + ManifestFile,
-		Mode: 0644,
-		Size: int64(len(manifestData)),
-	}
-	tw.WriteHeader(mHeader)
-	tw.Write(manifestData)
-	if err := saveManifest(manifest); err != nil {
-		fmt.Printf("Error saving manifest: %v\n", err)
-		os.Exit(1)
-	}
-	fmt.Printf("Saved snapshot %s: %s (%d files)\n", id, message, len(snapshot.Files))
+ encrypt := false
+ if strings.HasPrefix(message, "--encrypt ") {
+  encrypt = true
+  message = strings.TrimPrefix(message, "--encrypt ")
+ }
+ 
+ manifest, err := loadManifest()
+ if err != nil {
+  fmt.Printf("Error: Not a KOS repository. Run 'kos init'.\n")
+  os.Exit(1)
+ }
+ id := fmt.Sprintf("%x", time.Now().UnixNano())[:8]
+ filename := fmt.Sprintf("snap_%s.tar.gz", id)
+ filepathTar := filepath.Join(getKosDir(), filename)
+ snapshot := Snapshot{
+  ID:        id,
+  Timestamp: time.Now().Unix(),
+  Message:   message,
+  Filename:  filename,
+  Files:     make(map[string]string),
+ }
+ currentFiles, err := getWorkingDirectoryFiles()
+ if err != nil {
+  fmt.Printf("Error scanning directory: %v\n", err)
+  os.Exit(1)
+ }
+ snapshot.Files = currentFiles
+ manifest.Snapshots = append(manifest.Snapshots, snapshot)
+ 
+ // Create tar.gz file
+ file, err := os.Create(filepathTar)
+ if err != nil {
+  fmt.Printf("Error creating snapshot file: %v\n", err)
+  os.Exit(1)
+ }
+ gzw := gzip.NewWriter(file)
+ tw := tar.NewWriter(gzw)
+ 
+ // Add files to tar
+ for path := range currentFiles {
+  addFileToTar(tw, path)
+ }
+ 
+ // Add manifest
+ manifestData, _ := json.MarshalIndent(manifest, "", "  ")
+ mHeader := &tar.Header{
+  Name: ".kos/" + ManifestFile,
+  Mode: 0644,
+  Size: int64(len(manifestData)),
+ }
+ tw.WriteHeader(mHeader)
+ tw.Write(manifestData)
+ 
+ // IMPORTANT: Close all writers BEFORE encryption
+ tw.Close()
+ gzw.Close()
+ file.Close()
+ 
+ if err := saveManifest(manifest); err != nil {
+  fmt.Printf("Error saving manifest: %v\n", err)
+  os.Exit(1)
+ }
+ 
+ if encrypt {
+  encFilename := filename + ".enc"
+  encPath := filepath.Join(getKosDir(), encFilename)
+  password := promptPassword(true)
+  if err := encryptFile(filepathTar, encPath, password); err != nil {
+   fmt.Printf("Error encrypting: %v\n", err)
+   os.Exit(1)
+  }
+  os.Remove(filepathTar)
+  snapshot.Filename = encFilename
+  manifest.Snapshots[len(manifest.Snapshots)-1] = snapshot
+  saveManifest(manifest)
+  fmt.Printf("🔐 Saved encrypted snapshot %s: %s (%d files)\n", id, message, len(snapshot.Files))
+ } else {
+  fmt.Printf("Saved snapshot %s: %s (%d files)\n", id, message, len(snapshot.Files))
+ }
 }
 
 func formatRelativeTime(timestamp int64) string {
@@ -774,6 +805,63 @@ func cmdLoad(args ...string) {
   os.Exit(1)
  }
  target := args[0]
+
+// Handle .enc encrypted file import
+ if strings.HasSuffix(target, ".enc") {
+  if _, err := os.Stat(target); os.IsNotExist(err) {
+   fmt.Printf("Error: File '%s' not found\n", target)
+   os.Exit(1)
+  }
+  fmt.Printf("\n\033[1;36m🔐 Encrypted file detected: %s\033[0m\n", target)
+  password := promptPassword(false)
+  tempDir, err := os.MkdirTemp("", "kos-decrypt-*")
+  if err != nil {
+   fmt.Printf("Error: Cannot create temp directory: %v\n", err)
+   os.Exit(1)
+  }
+  defer os.RemoveAll(tempDir)
+  decryptedPath := filepath.Join(tempDir, "decrypted.tar.gz")
+  if err := decryptFile(target, decryptedPath, password); err != nil {
+   fmt.Printf("\033[31mError: %v\033[0m\n", err)
+   os.Exit(1)
+  }
+  fmt.Printf("\033[32m✅ Decryption successful!\033[0m\n\n")
+  // Now treat it like a normal tar.gz load
+  fmt.Printf("\033[1;36m📦 Loading decrypted snapshot...\033[0m\n\n")
+ // Read embedded manifest directly from tar.gz (bypasses .kos/ skip)
+  var embeddedManifest Manifest
+   if manifestContent, err := extractFileFromTar(decryptedPath, ".kos/"+ManifestFile); err == nil {
+    json.Unmarshal([]byte(manifestContent), &embeddedManifest)
+   } else {
+    embeddedManifest = Manifest{Snapshots: []Snapshot{}}
+   }
+  projectUUID := generateUUID()
+  home, _ := os.UserHomeDir()
+  globalProjectDir := filepath.Join(home, GlobalKosBase, projectUUID)
+  os.MkdirAll(globalProjectDir, 0755)
+  decData, _ := os.ReadFile(decryptedPath)
+  baseName := filepath.Base(target)
+  baseName = strings.TrimSuffix(baseName, ".enc")
+  globalTarPath := filepath.Join(globalProjectDir, baseName)
+  os.WriteFile(globalTarPath, decData, 0644)
+  manifestData, _ := json.MarshalIndent(embeddedManifest, "", "  ")
+  globalManifestPath := filepath.Join(globalProjectDir, ManifestFile)
+  os.WriteFile(globalManifestPath, manifestData, 0644)
+  if err := extractTarGz(decryptedPath, "."); err != nil {
+   fmt.Printf("Error: Failed to extract files: %v\n", err)
+   os.Exit(1)
+  }
+  os.WriteFile(".kos-project", []byte(projectUUID), 0644)
+  cwd, _ := os.Getwd()
+  projectName := filepath.Base(cwd)
+  updateProjectsIndex(projectUUID, projectName)
+  fmt.Printf("\n\033[1;32m✅ Loaded encrypted project successfully!\033[0m\n")
+  fmt.Printf("   Project: \033[1;36m%s\033[0m\n", projectName)
+  fmt.Printf("   UUID: \033[2;37m%s\033[0m\n", projectUUID)
+  fmt.Printf("   Commits: \033[1;36m%d\033[0m\n\n", len(embeddedManifest.Snapshots))
+  return
+ }
+
  
  // Handle .tar.gz file import
  if strings.HasSuffix(target, ".tar.gz") {

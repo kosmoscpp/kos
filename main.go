@@ -1,24 +1,29 @@
 package main
 
 import (
-	"archive/tar"
-	"bytes"
-	"compress/gzip"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/json"
-	"fmt"
-	"io"
-	"os"
-	"path/filepath"
-	"strings"
-	"time"
+ "archive/tar"
+ "bytes"
+ "compress/gzip"
+ "crypto/aes"
+ "crypto/cipher"
+ "crypto/hmac"
+ "crypto/rand"
+ "crypto/sha256"
+ "encoding/json"
+ "fmt"
+ "io"
+ "os"
+ "path/filepath"
+ "strings"
+ "time"
 )
 
 const (
-	ManifestFile  = "manifest.json"
-	IgnoreFile    = ".kosignore"
-	GlobalKosBase = ".kos-global"
+ ManifestFile  = "manifest.json"
+ IgnoreFile    = ".kosignore"
+ GlobalKosBase = ".kos-global"
+ EncMagic      = "KENC"
+ EncVersion    = 1
 )
 
 func isUUID(s string) bool {
@@ -58,6 +63,99 @@ func updateProjectsIndex(uuid, projectName string) {
 	index[uuid] = projectName
 	data, _ := json.MarshalIndent(index, "", "  ")
 	os.WriteFile(indexPath, data, 0644)
+}
+
+func deriveKey(password string) []byte {
+ hash := sha256.Sum256([]byte(password))
+ return hash[:]
+}
+
+func encryptFile(srcPath, dstPath, password string) error {
+ plaintext, err := os.ReadFile(srcPath)
+ if err != nil {
+  return err
+ }
+ key := deriveKey(password)
+ iv := make([]byte, aes.BlockSize)
+ if _, err := io.ReadFull(rand.Reader, iv); err != nil {
+  return err
+ }
+ block, err := aes.NewCipher(key)
+ if err != nil {
+  return err
+ }
+ ciphertext := make([]byte, len(plaintext))
+ stream := cipher.NewCFBEncrypter(block, iv)
+ stream.XORKeyStream(ciphertext, plaintext)
+ mac := hmac.New(sha256.New, key)
+ mac.Write([]byte(EncMagic))
+ mac.Write([]byte{EncVersion})
+ mac.Write(iv)
+ mac.Write(ciphertext)
+ macSum := mac.Sum(nil)
+ out, err := os.Create(dstPath)
+ if err != nil {
+  return err
+ }
+ defer out.Close()
+ out.Write([]byte(EncMagic))
+ out.Write([]byte{EncVersion})
+ out.Write(iv)
+ out.Write(ciphertext)
+ out.Write(macSum)
+ return nil
+}
+
+func decryptFile(srcPath, dstPath, password string) error {
+ data, err := os.ReadFile(srcPath)
+ if err != nil {
+  return err
+ }
+ if len(data) < 4+1+aes.BlockSize+sha256.Size {
+  return fmt.Errorf("invalid encrypted file")
+ }
+ magic := string(data[:4])
+ if magic != EncMagic {
+  return fmt.Errorf("not an encrypted KOS file")
+ }
+ version := data[4]
+ if version != EncVersion {
+  return fmt.Errorf("unsupported encryption version")
+ }
+ iv := data[5 : 5+aes.BlockSize]
+ macSum := data[len(data)-sha256.Size:]
+ ciphertext := data[5+aes.BlockSize : len(data)-sha256.Size]
+ key := deriveKey(password)
+ mac := hmac.New(sha256.New, key)
+ mac.Write(data[:len(data)-sha256.Size])
+ expectedMac := mac.Sum(nil)
+ if !hmac.Equal(macSum, expectedMac) {
+  return fmt.Errorf("wrong password or corrupted file")
+ }
+ block, err := aes.NewCipher(key)
+ if err != nil {
+  return err
+ }
+ plaintext := make([]byte, len(ciphertext))
+ stream := cipher.NewCFBDecrypter(block, iv)
+ stream.XORKeyStream(plaintext, ciphertext)
+ return os.WriteFile(dstPath, plaintext, 0644)
+}
+
+func promptPassword(confirm bool) string {
+ fmt.Print("Password: ")
+ var password string
+ fmt.Scanln(&password)
+ if confirm {
+  fmt.Print("Confirm password: ")
+  var confirm string
+  fmt.Scanln(&confirm)
+  if password != confirm {
+   fmt.Println("Passwords do not match.")
+   os.Exit(1)
+  }
+ }
+ return password
 }
 
 func getKosDir() string {
@@ -1333,16 +1431,20 @@ func extractTarGz(tarPath, destDir string) error {
    return err
   }
   
-  // Safe path handling - preserve directory structure
-  cleanName := header.Name
-  
-  // Remove .kos/ prefix if present
-  if strings.HasPrefix(cleanName, ".kos/") {
-   cleanName = strings.TrimPrefix(cleanName, ".kos/")
+  // Skip .kos/ metadata files entirely
+  if strings.HasPrefix(header.Name, ".kos/") {
+   continue
   }
   
-  // Skip empty or dangerous paths
-  if cleanName == "" || cleanName == "." || strings.Contains(cleanName, "..") {
+  cleanName := header.Name
+  
+  // Skip absolute paths or paths with ..
+  if strings.HasPrefix(cleanName, "/") || strings.Contains(cleanName, "..") {
+   continue
+  }
+  
+  // Skip empty or root paths
+  if cleanName == "" || cleanName == "." {
    continue
   }
   

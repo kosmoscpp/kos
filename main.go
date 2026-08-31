@@ -27,19 +27,15 @@ func getKosDir() string {
   home = "."
  }
  
- // Check if .kos-project exists and contains a UUID
  if data, err := os.ReadFile(".kos-project"); err == nil {
-  projectUUID := strings.TrimSpace(string(data))
-  if projectUUID != "" && len(projectUUID) > 20 { // UUIDs are long
-   return filepath.Join(home, GlobalKosBase, projectUUID)
-  }
- }
- 
- // Fallback for old projects (backward compatibility)
- if data, err := os.ReadFile(".kos-project"); err == nil {
-  projectName := strings.TrimSpace(string(data))
-  if projectName != "" {
-   return filepath.Join(home, GlobalKosBase, projectName)
+  projectRef := strings.TrimSpace(string(data))
+  if projectRef != "" {
+   // If it's a UUID (correct format), use it directly
+   if isUUID(projectRef) {
+    return filepath.Join(home, GlobalKosBase, projectRef)
+   }
+   // Otherwise, it's a project name (backward compatibility)
+   return filepath.Join(home, GlobalKosBase, projectRef)
   }
  }
  
@@ -51,11 +47,34 @@ func getKosDir() string {
  return filepath.Join(home, GlobalKosBase, projectName)
 }
 
+
 func generateUUID() string {
  b := make([]byte, 16)
  rand.Read(b)
  return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
 }
+
+func isUUID(s string) bool {
+ if len(s) != 36 {
+  return false
+ }
+ // Check dashes at positions 8, 13, 18, 23 (use single quotes!)
+ if s[8] != '-' || s[13] != '-' || s[18] != '-' || s[23] != '-' {
+  return false
+ }
+ // Check all other chars are hex
+ for i := 0; i < 36; i++ {
+  if i == 8 || i == 13 || i == 18 || i == 23 {
+   continue
+  }
+  c := s[i]
+  if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+   return false
+  }
+ }
+ return true
+}
+
 
 func updateProjectsIndex(uuid, projectName string) {
  home, _ := os.UserHomeDir()
@@ -209,41 +228,50 @@ func printUsage() {
 }
 
 func cmdInit() {
- kosDir := getKosDir()
- if _, err := os.Stat(kosDir); err == nil {
+ // Check if this folder is already a KOS project
+ if _, err := os.Stat(".kos-project"); err == nil {
   fmt.Println("KOS repository already initialized.")
   return
  }
- 
+
  // Generate UUID for this project
  projectUUID := generateUUID()
- 
+
+ home, _ := os.UserHomeDir()
+ kosDir := filepath.Join(home, GlobalKosBase, projectUUID)
+
  if err := os.MkdirAll(kosDir, 0755); err != nil {
   fmt.Printf("Error creating %s: %v\n", kosDir, err)
   os.Exit(1)
  }
- 
+
+ // Store UUID in .kos-project FIRST (so getKosDir() works)
+ if err := os.WriteFile(".kos-project", []byte(projectUUID), 0644); err != nil {
+  fmt.Printf("Error creating .kos-project: %v\n", err)
+  os.Exit(1)
+ }
+
+ // Now create the manifest
  manifest := Manifest{Snapshots: []Snapshot{}}
  if err := saveManifest(manifest); err != nil {
   fmt.Printf("Error creating manifest: %v\n", err)
   os.Exit(1)
  }
- 
+
  if err := os.WriteFile(IgnoreFile, []byte(""), 0644); err != nil {
   fmt.Printf("Error creating %s: %v\n", IgnoreFile, err)
   os.Exit(1)
  }
- 
- // Store UUID in .kos-project
- if err := os.WriteFile(".kos-project", []byte(projectUUID), 0644); err != nil {
-  fmt.Printf("Error creating .kos-project: %v\n", err)
-  os.Exit(1)
- }
- 
+
+ // Get project name from current directory
+ cwd, _ := os.Getwd()
+ projectName := filepath.Base(cwd)
+
  // Add to projects.json index
- updateProjectsIndex(projectUUID, filepath.Base(kosDir))
- 
+ updateProjectsIndex(projectUUID, projectName)
+
  fmt.Printf("Initialized empty KOS repository in %s\n", kosDir)
+ fmt.Printf("Project UUID: %s\n", projectUUID)
 }
 
 func cmdIgnore(pattern string) {

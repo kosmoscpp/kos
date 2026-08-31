@@ -2,86 +2,82 @@
 
 A lightweight, offline-first, encrypted version control system built for disconnected environments.
 
-KOS solves a real problem: Git requires internet access and complex setup. What if you're on a plane, in a remote area, or working on a USB drive? KOS gives you full version control with zero dependencies, portable snapshots, and built-in AES encryption.
+## 🚀 The Problem
 
-## 🚀 Features
+Git is amazing, but it requires:
+- Internet access (for remote repos)
+- Complex setup (SSH keys, GitHub accounts)
+- Server infrastructure
 
-- Zero Dependencies - Single binary, no installation needed
-- Portable Snapshots - Every save is a self-contained .tar.gz file
-- Global Project Store - Work on projects from any folder, any device
-- Collision-Proof UUIDs - Never lose work to folder name conflicts
-- Built-in Encryption - AES-128-CFB + HMAC-SHA256 for secure sharing
-- **Smart .kosignore** - Instantly skips massive directories (O(1) optimizationBeautiful CLILI** - ASCII timeline with relative timestampHEAD Navigationon** - HEAD, HEAD~1, tags work everywherSingle-File Checkoutut** - Restore individual files from historCode Diffff** - Line-by-line LCS diff for any two snapshots
+What if you're on a plane? Working on a USB drive? In a remote area with no internet?
 
-## 📦 Quick Start
+## 💡 The Solution: KOS
 
-# Initialize a project
+KOS gives you full version control with:
+- Zero dependencies - Single binary, no installation
+- Portable snapshots - Every save is a self-contained .tar.gz file
+- Built-in encryption - AES-128-CFB + HMAC-SHA256
+- Global project store - Work from any folder, any device
+- Collision-proof UUIDs - Never lose work to folder conflicts
+
+## 🎯 Quick Start
+
+# Initialize
 kos init
 
-# Create a snapshot
+# Save with message
 kos save "Initial commit"
 
-# View history
+# View timeline
 kos view
 
-# Tag a release
-kos tag v1.0
-
-# Export as portable file
-kos share v1.0
-## 🔐 Encryption
-
-Share encrypted projects via USB, email, or cloud storage:
-
-# Save with encryption
+# Encrypt and share
 kos save --encrypt "Secret commit"
-# Enter password when prompted
+kos share HEAD
+## 🔐 Encryption Demo
 
-# Load encrypted file
-kos load snap_*.tar.gz.enc
-# Enter password to decrypt
-**File format:** [KENC][version][IV][encrypted data][HMAC]
-- AES-128-CFB stream cipher (zero RAM spike)
-- HMAC-SHA256 integrity verification
-- Password verification before extraction
+# Save encrypted snapshot
+kos save --encrypt "Top secret"
+Password: ******
+Confirm password: ******
+🔐 Saved encrypted snapshot abc12345: Top secret (3 files)
 
-## 🎯 WhGit is amazing.azing.** But it's not built for:
-- Working offline on a plane
-- Sharing projects via USB drive
-- Quick prototyping without GitHub setup
-- Air-gapped enviroKOS is built for exactly that. that.** It's Git's little brother for the disconnected world.
+# Export
+kos share HEAD
+✅ Snapshot exported: snap_abc12345.tar.gz.enc (400 bytes)
 
-## 🏗️ Architecture
-Project Folder/
-├── .kos-project          # Project UUID reference
-├── .kosignore           # Ignore patterns
-└── [your files]
-Global Store (~/.kos-global/):
-├── /
-│   ├── manifest.json    # Snapshot metadata
-│   ├── snap_*.tar.gz    # Compressed snapshots
-│   └── .kosignore
-├── /
-└── projects.json        # UUID → name index
+# Load on another machine
+kos load snap_abc12345.tar.gz.enc
+Password: ******
+✅ Decryption successful!
+That 400-byte file contains your entire encrypted project. Email it, put it on a USB, share it anywhere.
 
 ## 🛠️ Commands
 
 | Command | Description |
 |---------|-------------|
-| init | Initialize KOS repository |
+| init | Initialize repository |
 | save <msg> | Create snapshot |
-| save --encrypt <msg> | Create encrypted snapshot |
-| view | View timeline with relative timestamps |
+| save --encrypt <msg> | Encrypted snapshot |
+| view | Timeline with relative timestamps |
 | status | Show modified files |
-| checkout <ref> [file] | Restore snapshot or single file |
-| diff <id1> <id2> [file] | Compare snapshots |
-| tag <name> [id] | Tag a snapshot |
-| share <id> | Export as portable .tar.gz |
-| load <file/project> | Load from file or global store |
-| projects | List all projects in global store |
-| ignore <pattern> | Add to .kosignore |
-| search <keyword> | Search commit messages |
-| stats | Project statistics |
+| checkout <ref> [file] | Restore snapshot or file |
+| diff <id1> <id2> | Compare snapshots |
+| tag <name> | Tag a snapshot |
+| share <id> | Export portable file |
+| load <file> | Load from file or global store |
+| projects | List all projects |
+
+## 🏗️ Architecture
+Project Folder/
+├── .kos-project          # UUID reference
+├── .kosignore           # Ignore patterns
+└── [your files]
+Global Store (~/.kos-global/):
+├── /
+│   ├── manifest.json    # Snapshot metadata
+│   └── snap_*.tar.gz    # Compressed snapshots
+└── projects.json        # UUID → name index
 
 ## 🎓 Built For
 
@@ -93,8 +89,4 @@ Global Store (~/.kos-global/):
 
 ## 📄 License
 
-MIT License - Built with ❤️  by Krishna for the Hackathon 2026
-
----
-
-KOS: Version control that just works, anywhere.
+MIT License - Built with ❤️  for Hackathon 2026

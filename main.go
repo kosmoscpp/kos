@@ -1065,55 +1065,69 @@ func addFileToTar(tw *tar.Writer, path string) {
 }
 
 func extractTarGz(tarPath, destDir string) error {
-	file, err := os.Open(tarPath)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-	gzr, err := gzip.NewReader(file)
-	if err != nil {
-		return err
-	}
-	defer gzr.Close()
-	tr := tar.NewReader(gzr)
-	absDest, err := filepath.Abs(destDir)
-	if err != nil {
-		return err
-	}
-	for {
-		header, err := tr.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return err
-		}
-		cleanName := strings.TrimLeft(header.Name, "/\\")
-		if cleanName == "" {
-			continue
-		}
-		target := filepath.Join(destDir, cleanName)
-		absTarget, err := filepath.Abs(target)
-		if err != nil {
-			return err
-		}
-		if !strings.HasPrefix(absTarget, absDest+string(os.PathSeparator)) && absTarget != absDest {
-			return fmt.Errorf("illegal file path: %s", header.Name)
-		}
-		switch header.Typeflag {
-		case tar.TypeDir:
-			os.MkdirAll(target, 0755)
-		case tar.TypeReg:
-			os.MkdirAll(filepath.Dir(target), 0755)
-			f, err := os.OpenFile(target, os.O_CREATE|os.O_RDWR, os.FileMode(header.Mode))
-			if err != nil {
-				continue
-			}
-			io.Copy(f, tr)
-			f.Close()
-		}
-	}
-	return nil
+ file, err := os.Open(tarPath)
+ if err != nil {
+  return err
+ }
+ defer file.Close()
+ gzr, err := gzip.NewReader(file)
+ if err != nil {
+  return err
+ }
+ defer gzr.Close()
+ tr := tar.NewReader(gzr)
+ absDest, err := filepath.Abs(destDir)
+ if err != nil {
+  return err
+ }
+ for {
+  header, err := tr.Next()
+  if err == io.EOF {
+   break
+  }
+  if err != nil {
+   return err
+  }
+  
+  // Smart path extraction: look for .kos/ or just use basename
+  cleanName := header.Name
+  if idx := strings.Index(cleanName, ".kos/"); idx >= 0 {
+   // Extract from .kos/ onwards
+   cleanName = cleanName[idx:]
+  } else if strings.Contains(cleanName, string(os.PathSeparator)) || strings.Contains(cleanName, "/") {
+   // If it's a deeply nested absolute path, just use the basename
+   cleanName = filepath.Base(cleanName)
+  } else {
+   // Otherwise, just strip leading slashes
+   cleanName = strings.TrimLeft(cleanName, "/\\")
+  }
+  
+  if cleanName == "" {
+   continue
+  }
+  
+  target := filepath.Join(destDir, cleanName)
+  absTarget, err := filepath.Abs(target)
+  if err != nil {
+   return err
+  }
+  if !strings.HasPrefix(absTarget, absDest+string(os.PathSeparator)) && absTarget != absDest {
+   return fmt.Errorf("illegal file path: %s", header.Name)
+  }
+  switch header.Typeflag {
+  case tar.TypeDir:
+   os.MkdirAll(target, 0755)
+  case tar.TypeReg:
+   os.MkdirAll(filepath.Dir(target), 0755)
+   f, err := os.OpenFile(target, os.O_CREATE|os.O_RDWR, os.FileMode(header.Mode))
+   if err != nil {
+    continue
+   }
+   io.Copy(f, tr)
+   f.Close()
+  }
+ }
+ return nil
 }
 
 func extractFileFromTar(tarPath, fileName string) (string, error) {
@@ -1144,15 +1158,5 @@ func extractFileFromTar(tarPath, fileName string) (string, error) {
 			return buf.String(), nil
 		}
 	}
-	if err != nil {
-		return "", err
-	}
-	defer file.Close()
-	gzr, err := gzip.NewReader(file)
-	if err != nil {
-		return "", err
-	}
-	defer gzr.Close()
-	tr := tar.NewReader(gzr)
 	return "", fmt.Errorf("file not found in archive")
 }

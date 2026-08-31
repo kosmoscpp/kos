@@ -1144,5 +1144,15 @@ func extractFileFromTar(tarPath, fileName string) (string, error) {
 			return buf.String(), nil
 		}
 	}
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	gzr, err := gzip.NewReader(file)
+	if err != nil {
+		return "", err
+	}
+	defer gzr.Close()
+	tr := tar.NewReader(gzr)
 	return "", fmt.Errorf("file not found in archive")
 }

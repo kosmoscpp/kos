@@ -40,11 +40,12 @@ func getKosDir() string {
 }
 
 type Snapshot struct {
-	ID        string            `json:"id"`
-	Timestamp int64             `json:"timestamp"`
-	Message   string            `json:"message"`
-	Filename  string            `json:"filename"`
-	Files     map[string]string `json:"files"`
+ ID        string            `json:"id"`
+ Timestamp int64             `json:"timestamp"`
+ Message   string            `json:"message"`
+ Filename  string            `json:"filename"`
+ Files     map[string]string `json:"files"`
+ Tag       string            `json:"tag,omitempty"`
 }
 
 type Manifest struct {
@@ -123,6 +124,16 @@ func main() {
 			os.Exit(1)
 		}
 		cmdShare(os.Args[2])
+	case "tag":
+	 if len(os.Args) < 3 {
+	  fmt.Println("Error: missing tag name. Usage: kos tag <name> [snapshot-id]")
+	  os.Exit(1)
+	 }
+	 if len(os.Args) == 3 {
+	  cmdTag(os.Args[2], "")
+	 } else {
+	  cmdTag(os.Args[2], os.Args[3])
+	 }
 	default:
 		fmt.Printf("Unknown command: %s\n", command)
 		printUsage()
@@ -148,6 +159,7 @@ func printUsage() {
 	fmt.Println("  rename <name>      Rename the current project")
 	fmt.Println("  search <keyword>   Search commit messages")
 	fmt.Println("  share <id>         Export snapshot as portable file")
+	fmt.Println("  tag <name> [id]    Tag a snapshot with a name")
 }
 
 func cmdInit() {
@@ -237,32 +249,39 @@ func cmdSave(message string) {
 }
 
 func cmdView() {
-	manifest, err := loadManifest()
-	if err != nil {
-		fmt.Printf("Error: Not a KOS repository. Run 'kos init'.\n")
-		os.Exit(1)
-	}
-	fmt.Println("\033[1;36m")
-	fmt.Println("╔══════════════════════════════════════════════════════════╗")
-	fmt.Println("║                     KOS TIMELINE                         ║")
-	fmt.Println("╚══════════════════════════════════════════════════════════╝")
-	fmt.Println("\033[0m")
-	if len(manifest.Snapshots) == 0 {
-		fmt.Println("  No snapshots yet. Use 'kos save <message>' to create one.\n")
-		return
-	}
-	for i := len(manifest.Snapshots) - 1; i >= 0; i-- {
-		snap := manifest.Snapshots[i]
-		t := time.Unix(snap.Timestamp, 0)
-		timeStr := t.Format("Jan 02, 15:04")
-		fmt.Printf("  \033[36m●\033[0m \033[1;33m%-8s\033[0m ┃ \033[2;37m%s\033[0m ┃ \033[1;37m%s\033[0m\n", snap.ID, timeStr, snap.Message)
-		fmt.Printf("  \033[36m│\033[0m           ┃  %d files\n", len(snap.Files))
-		if i == 0 {
-			fmt.Printf("  \033[36m└──\033[0m (End of history)\n\n")
-		} else {
-			fmt.Printf("  \033[36m│\033[0m\n")
-		}
-	}
+ manifest, err := loadManifest()
+ if err != nil {
+  fmt.Printf("Error: Not a KOS repository. Run 'kos init'.\n")
+  os.Exit(1)
+ }
+ fmt.Println("\033[1;36m")
+ fmt.Println("╔══════════════════════════════════════════════════════════╗")
+ fmt.Println("║                     KOS TIMELINE                         ║")
+ fmt.Println("╚══════════════════════════════════════════════════════════╝")
+ fmt.Println("\033[0m")
+ if len(manifest.Snapshots) == 0 {
+  fmt.Println("  No snapshots yet. Use 'kos save <message>' to create one.\n")
+  return
+ }
+ for i := len(manifest.Snapshots) - 1; i >= 0; i-- {
+  snap := manifest.Snapshots[i]
+  t := time.Unix(snap.Timestamp, 0)
+  timeStr := t.Format("Jan 02, 15:04")
+  
+  // Build tag display string
+  tagStr := ""
+  if snap.Tag != "" {
+   tagStr = fmt.Sprintf(" \033[1;32m[%s]\033[0m", snap.Tag)
+  }
+  
+  fmt.Printf("  \033[36m●\033[0m \033[1;33m%-8s\033[0m ┃ \033[2;37m%s\033[0m ┃ \033[1;37m%s\033[0m%s\n", snap.ID, timeStr, snap.Message, tagStr)
+  fmt.Printf("  \033[36m│\033[0m           ┃  %d files\n", len(snap.Files))
+  if i == 0 {
+   fmt.Printf("  \033[36m└──\033[0m (End of history)\n\n")
+  } else {
+   fmt.Printf("  \033[36m│\033[0m\n")
+  }
+ }
 }
 
 func cmdStatus() {
@@ -498,7 +517,7 @@ func cmdStats() {
 	}
 	sizeStr := formatBytes(totalSize)
 	fmt.Println("\n\033[1;36m╔══════════════════════════════════════════════════════════╗\033[0m")
-	fmt.Println("\033[1;36m║\033[0m                    \033[1;37mKOS PROJECT STATS\033[0m                    \033[1;36m║\033[0m")
+	fmt.Println("\033[1;36m║\033[0m                    \033[1;37mKOS PROJECT STATS\033[0m                     \033[1;36m║\033[0m")
 	fmt.Println("\033[1;36m╚══════════════════════════════════════════════════════════╝\033[0m")
 	fmt.Println()
 	fmt.Printf("  \033[1;33mProject Name:\033[0m      %s\n", projectName)
@@ -632,6 +651,55 @@ func cmdSearch(keyword string) {
 	fmt.Println()
 }
 
+ func cmdTag(tagName, snapshotID string) {
+  manifest, err := loadManifest()
+  if err != nil {
+   fmt.Printf("Error: Not a KOS repository. Run 'kos init'.\n")
+   os.Exit(1)
+  }
+ 
+  if len(manifest.Snapshots) == 0 {
+   fmt.Println("Error: No snapshots to tag.")
+   os.Exit(1)
+  }
+ 
+  // Check if tag name is already used
+  for _, snap := range manifest.Snapshots {
+   if snap.Tag == tagName {
+    fmt.Printf("Error: Tag '%s' already exists on snapshot %s\n", tagName, snap.ID)
+    os.Exit(1)
+   }
+  }
+ 
+  // Find the snapshot to tag
+  var targetSnap *Snapshot
+  if snapshotID == "" {
+   // Tag the latest snapshot
+   targetSnap = &manifest.Snapshots[len(manifest.Snapshots)-1]
+  } else {
+   for i := range manifest.Snapshots {
+    if manifest.Snapshots[i].ID == snapshotID {
+     targetSnap = &manifest.Snapshots[i]
+     break
+    }
+   }
+   if targetSnap == nil {
+    fmt.Printf("Error: Snapshot '%s' not found\n", snapshotID)
+    os.Exit(1)
+   }
+  }
+ 
+  // Apply the tag
+  targetSnap.Tag = tagName
+ 
+  if err := saveManifest(manifest); err != nil {
+   fmt.Printf("Error saving manifest: %v\n", err)
+   os.Exit(1)
+  }
+ 
+  fmt.Printf("✅ Tagged snapshot \033[1;33m%s\033[0m as \033[1;32m[%s]\033[0m\n", targetSnap.ID, tagName)
+ }
+ 
 func cmdShare(snapshotID string) {
 	manifest, err := loadManifest()
 	if err != nil {

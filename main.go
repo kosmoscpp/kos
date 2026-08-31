@@ -373,6 +373,47 @@ func cmdExport(id, destDir string) {
 	fmt.Println("Export complete!")
 }
 
+// resolveRef translates "HEAD", "HEAD~1", tags, or IDs into a Snapshot pointer
+func resolveRef(ref string) *Snapshot {
+ manifest, err := loadManifest()
+ if err != nil {
+  return nil
+ }
+ 
+ snaps := manifest.Snapshots
+ if len(snaps) == 0 {
+  return nil
+ }
+
+ // Handle HEAD
+ if ref == "HEAD" {
+  return &snaps[len(snaps)-1]
+ }
+
+ // Handle HEAD~1, HEAD~2, etc.
+ if strings.HasPrefix(ref, "HEAD~") {
+  parts := strings.Split(ref, "~")
+  if len(parts) == 2 {
+   var offset int
+   fmt.Sscanf(parts[1], "%d", &offset)
+   idx := len(snaps) - 1 - offset
+   if idx >= 0 && idx < len(snaps) {
+    return &snaps[idx]
+   }
+  }
+  return nil
+ }
+
+ // Handle Tags or exact IDs
+ for i := range snaps {
+  if snaps[i].ID == ref || snaps[i].Tag == ref {
+   return &snaps[i]
+  }
+ }
+
+ return nil
+}
+
 func cmdCheckout(target string) {
  manifest, err := loadManifest()
  if err != nil {
